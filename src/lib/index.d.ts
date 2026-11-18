@@ -73,6 +73,8 @@ export interface GraphStyleOptions {
   edgeDimOpacity?: number;
   /** 节点整体尺寸倍数。 */
   nodeScale?: number;
+  /** 节点最小屏幕尺寸（CSS 像素），用于保证低权重节点可见。 */
+  minimumNodeSize?: number;
   /** 权重对节点尺寸差异的影响强度。 */
   weightStrength?: number;
   /** 标签总开关。 */
@@ -101,6 +103,8 @@ export interface RenderStyle {
   edgeDimOpacity: number;
   /** 节点尺寸倍数。 */
   nodeScale: number;
+  /** 节点最小屏幕尺寸（CSS 像素）。 */
+  minimumNodeSize: number;
   /** 权重影响强度。 */
   weightStrength: number;
   /** 标签总开关。 */

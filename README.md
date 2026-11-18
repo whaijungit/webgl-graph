@@ -1,115 +1,324 @@
-# 全国交通要素 · Three.js
+# webgl-graph · WebGL2 高性能关系图
 
-把天地图 WFS 的全国铁路、公路要素做成一张可旋转、可缩放的 **三维球面交通网络**。
+`traffic-globe` 是一个基于 **TypeScript + Vite + WebGL2** 的高性能关系网络原型。项目名称沿用原交通球项目，但当前核心已经迁移为通用关系图：数据以 SoA TypedArray 组织，支持交互选择、直接邻域高亮、图片图标、共享 Canvas 标签、边样式和百万节点级压测。
 
-![全国交通要素三维球面预览](preview.png)
+默认演示数据为 **100 个节点 / 3,000 条边 / 10 个社区**。节点数达到 **100,000** 后自动切换为 Point Sprite 大图渲染路径。
 
-- 铁路：`LRRL`，5,274 个要素
-- 公路：`LRDL`，171,472 个要素
-- 范围：中国及周边，`73°E – 135°E / 18°N – 54°N`
-- 版本：`1:1,000,000` 基础地理数据（2017 版），**不是实时交通流量**
-- 原始服务：[天地图 TDTService WFS](https://gisserver.tianditu.gov.cn/TDTService/wfs)
-- 渲染：Three.js `LineSegments` + 球面经纬投影 + UnrealBloom + CSS2D 城市标注
+## 主要能力
 
-> 原始 WFS 要素量较大（公路约 171k 条、原始坐标约 754 万点），浏览器直接逐页请求会很慢。项目先用 `scripts/fetch_transport.py` 离线段位简化，再打包成 `public/data/transport.bin` 供前端一次加载。
+- WebGL2 实例化渲染，CPU 热路径主要维护 TypedArray 和 GPU buffer。
+- `GraphView.setData()` 同时接受运行时 `GraphData`、SoA `GraphPayload` 和业务对象 `ObjectGraphPayload`。
+- 点击节点显示直接邻居、原始图标、标签和关联边；点击其他节点切换邻域，点击空白区域清除选择。
+- 邻域节点保留各自的 `nodeColors` 和 `nodeIconIds`，关联边保留各自的 `edgeColors`。
+- 支持圆形、方形、菱形、三角形、六边形、星形、混合形状和图片图标。
+- 支持直线、曲线和虚线边；直线使用片元级抗锯齿。
+- 节点标签共享一个 Canvas 2D 图层，不创建逐节点 DOM。
+- 默认按需渲染；可持续渲染并按 30～60 FPS 控制目标帧率。
+- 配置面板支持 JSON 数据上传和示例数据下载。
 
-## 运行
+## 快速开始
 
-```bash
-cd traffic-globe
-pnpm install
-pnpm dev
-```
-
-也可以使用 npm：
+建议使用 Node.js 20.19+ 或 22.12+。
 
 ```bash
 npm install
 npm run dev
 ```
 
-打开 `http://127.0.0.1:4317`。
+开发服务器通常运行在 `http://localhost:5173/`，实际地址以 Vite 输出为准。
 
-无 UI 关系图库：
+生产预览：
 
-```js
-import { GraphView } from "china-transport-globe";
-
-const graph = new GraphView("#graph-canvas");
-graph.setData(payload);
+```bash
+npm run build
+npm run preview
 ```
 
-详细 API 和构建说明见 [docs/library.md](docs/library.md)。
+预览地址固定为 `http://127.0.0.1:4317`。
 
-真实 npm 包依赖示例：
+## 压测数据
+
+主页面通过 URL 参数选择合成数据规模：
 
 ```text
-http://127.0.0.1:4317/examples/npm-dependencies.html
+http://localhost:5173/?preset=100k
+http://localhost:5173/?preset=300k
+http://localhost:5173/?preset=600k
+http://localhost:5173/?preset=1m
 ```
 
-该示例以当前应用为根节点，从 npm 官方 Registry 递归读取 `three` 与
-`vite` 的普通依赖和可选依赖。数据快照位于
-`src/data/npm-dependencies.json`，可通过以下命令更新：
+| 预设 | 节点 | 边 | 社区 |
+| --- | ---: | ---: | ---: |
+| 默认 | 100 | 3,000 | 10 |
+| `100k` | 100,000 | 200,000 | 48 |
+| `300k` | 300,000 | 600,000 | 64 |
+| `600k` | 600,000 | 1,200,000 | 96 |
+| `1m` | 1,000,000 | 2,000,000 | 128 |
+
+可使用 `nodes`、`edges`、`clusters` 和 `seed` 覆盖数量与随机种子：
+
+```text
+http://localhost:5173/?preset=100k&nodes=150000&edges=350000
+```
+
+持续渲染和 FPS 采样：
+
+```text
+http://localhost:5173/?preset=300k&continuous=1&fps=60
+```
+
+更多压测说明见 [docs/performance-testing.md](docs/performance-testing.md)。
+
+## 交互
+
+- 在空白区域拖拽：平移画布。
+- 在节点上拖拽：只移动该节点及其关联边，不移动相机。
+- 滚轮：以指针位置为中心缩放。
+- 点击节点：显示焦点、全部直接邻居、关联边和邻居标签。
+- 点击其他节点：切换焦点邻域。
+- 点击空白区域：清除选择。
+- 配置面板：切换数据规模、上传数据、下载示例、缩放、适配视图和调整样式。
+
+演示页会在浏览器控制台暴露以下调试对象：
+
+```js
+window.graphView;
+window.graphStressInfo;
+window.graphLastFrame;
+window.graphMetrics;
+```
+
+## 作为库使用
+
+公共入口为 `src/lib/index.ts`，类型声明入口为 `src/lib/index.d.ts`。构建公共库：
 
 ```bash
-npm run build:npm-sample
+npm run build:lib
 ```
 
-生产构建：
+产物为 `dist-lib/traffic-graph.js`。包名和导入方式：
 
-```bash
-pnpm build
-pnpm preview
+```ts
+import { GraphView } from "china-transport-globe";
 ```
 
-## 数据刷新
+最小 HTML 结构：
 
-```bash
-python scripts/fetch_transport.py --force
+```html
+<div id="graph">
+  <canvas id="graph-canvas"></canvas>
+</div>
 ```
 
-若已跑过一次，修改渲染逻辑后可以直接从处理缓存重新打包：
+```css
+#graph {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
 
-```bash
-python scripts/fetch_transport.py --from-cache
+#graph-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #030b12;
+}
 ```
 
-脚本会：
+业务对象图用法：
 
-1. 按 `count=5000` 分页请求 WFS 的 `LRRL` / `LRDL`；
-2. 用 Douglas–Peucker 简化线位，并丢弃国家尺度下不可见的小于约 1.3 km 的碎段；
-3. 生成 `public/data/transport.bin`（Float32 经纬度 + Uint32 偏移）；
-4. 下载并简化省级边界 `public/data/china.json`；
-5. 写入 `public/data/meta.json`（图层数量、节点数、来源）。
+```ts
+import { GraphView } from "china-transport-globe";
 
-当前快照：铁路 5,274 个要素、公路 171,472 个要素。界面上的数量是 WFS 原始匹配数，渲染使用的是简化后的线位。
+const graph = new GraphView("#graph-canvas", {
+  fitPadding: 0.9,
+  style: {
+    nodeShape: "image",
+    edgeStyle: "straight",
+    showLabels: true,
+    labelFontSize: 10,
+  },
+});
 
-## 目录
+graph.setData({
+  groups: [
+    { id: "root", label: "应用" },
+    { id: "vite", label: "vite" },
+  ],
+  nodes: [
+    { id: "app@1.0.0", name: "app", kind: "root", branch: "root" },
+    { id: "vite@7.0.0", name: "vite", kind: "devDependency", branch: "vite" },
+  ],
+  edges: [
+    {
+      source: "app@1.0.0",
+      target: "vite@7.0.0",
+      kind: "devDependency",
+    },
+  ],
+});
+```
+
+对象图不需要预先计算 GPU 坐标或 TypedArray：
+
+- `nodes[].id` 必须唯一，边的 `source/target` 必须引用节点 ID。
+- `node.group` 优先，其次使用 `node.branch` 关联 `groups[].id`。
+- 缺少分组时会根据节点字段推导；缺少坐标时会生成确定性的分组布局。
+- 节点可选 `x/y/size/weight/color/iconId`；边可选 `label/width/color`。
+- 边的 GPU 端点坐标由节点位置自动生成。
+
+完整 API、颜色格式和事件说明见 [docs/library.md](docs/library.md)。
+
+## 数据格式
+
+### 业务对象图
+
+`ObjectGraphPayload` 适合直接接入业务数据：
+
+```ts
+interface ObjectGraphPayloadExample {
+  groups?: { id: string; label?: string | null }[];
+  nodes: {
+    id: string;
+    name?: string | null;
+    label?: string | null;
+    kind?: string | null;
+    group?: string | null;
+    branch?: string | null;
+    x?: number;
+    y?: number;
+    size?: number;
+    weight?: number;
+    color?: ColorInput;
+    iconId?: number;
+  }[];
+  edges: {
+    source: string;
+    target: string;
+    kind?: string | null;
+    label?: string | null;
+    width?: number;
+    color?: ColorInput;
+  }[];
+}
+```
+
+### SoA GraphPayload
+
+大规模数据应直接使用连续 TypedArray：
+
+```text
+nodePositions    Float32Array  2 x N
+nodeSizes        Float32Array    N
+nodeColors       Uint8Array     4 x N
+nodeGroups       Uint16Array     N
+nodeIconIds      Uint8Array      N, optional
+nodeWeights      Float32Array    N, optional
+nodeLabels       string[]        N, optional
+nodeKinds        string[]        N, optional
+groupLabels      string[]        G, optional
+edgeSources      Uint32Array     E
+edgeTargets      Uint32Array     E
+edgePositions    Float32Array  4 x E
+edgeWidths       Float32Array    E
+edgeColors       Uint8Array     4 x E
+edgeKinds        string[]        E, optional
+```
+
+普通数值数组会在装载时转换为对应 TypedArray。节点颜色和边颜色支持 CSS 颜色、十六进制整数、RGB/RGBA 元组以及扁平 RGBA 字节数组。
+
+完整数据契约见 [docs/high-performance-graph.md](docs/high-performance-graph.md)；可直接上传的对象图示例位于 [src/examples/relationship-payload.ts](src/examples/relationship-payload.ts)。
+
+## 渲染策略
+
+### 小图
+
+节点数小于 100,000 时：
+
+- 每个节点使用四顶点图标四边形实例化绘制。
+- 点击节点时额外绘制邻域覆盖层，使用邻居自己的图片图标和颜色。
+- 普通状态通常为 2 个 draw call：边、节点。
+- 选中状态通常为 3 个 draw call：边、普通节点、邻域覆盖层。
+
+### 大图
+
+节点数至少为 100,000 时：
+
+- 每个节点使用一个 Point Sprite 顶点，图标由 `nodeIconIds` 在片元着色器中绘制。
+- 当前视口内的全部节点都会提交，不按节点预算或实例序号抽样。
+- 当前焦点最后提交，直接邻居紧随其后，避免被普通节点覆盖。
+- 选中节点约放大到 40～60px，直接邻居至少约 24px。
+- 大图选中状态仍为 2 个 draw call：边、节点。
+
+性能不足时，降级主要发生在普通边预算、Point Sprite 片元尺寸和普通标签预算；焦点、全部直接邻居及其关联边始终绕过 LOD。
+
+## 项目结构
 
 ```text
 traffic-globe/
 ├─ index.html
 ├─ src/
-│  ├─ main.js         # Three.js 场景、数据解析、交互
-│  └─ style.css       # HUD / 面板 / 标注
-├─ public/data/
-│  ├─ transport.bin   # 铁路 + 公路线位
-│  ├─ china.json      # 省级边界
-│  └─ meta.json       # 统计与来源
-└─ scripts/
-   └─ fetch_transport.py
+│  ├─ main.ts                       # 演示装配、配置面板、上传与邻域面板
+│  ├─ examples/
+│  │  └─ relationship-payload.ts    # SoA 与对象图示例
+│  ├─ graph/
+│  │  ├─ GraphData.ts               # SoA 数据校验与访问
+│  │  ├─ GraphDataService.ts        # Worker 生命周期
+│  │  ├─ NodeAdjacencyIndex.ts      # CSR 邻接索引
+│  │  ├─ ObjectGraphAdapter.ts      # 对象图转 SoA
+│  │  └─ SyntheticGraphGenerator.ts # 合成数据
+│  ├─ interaction/
+│  │  ├─ GraphInteractionController.ts
+│  │  └─ SpatialNodeIndex.ts
+│  ├─ lib/
+│  │  ├─ GraphView.ts
+│  │  ├─ index.ts
+│  │  ├─ index.d.ts
+│  │  └─ types.ts
+│  └─ render/
+│     ├─ GraphRenderer.ts
+│     ├─ NodeRenderer.ts
+│     ├─ NodeLabelRenderer.ts
+│     ├─ EdgeRenderer.ts
+│     ├─ HighlightOverlayRenderer.ts
+│     ├─ NodeIconAtlas.ts
+│     └─ GraphStyle.ts
+├─ docs/
+│  ├─ library.md
+│  ├─ high-performance-graph.md
+│  └─ performance-testing.md
+└─ package.json
 ```
 
-## 交互
+## 常用命令
 
-- 拖拽：旋转地球
-- 滚轮：缩放
-- 图层控制：铁路 / 公路 / 省界
-- 自动巡航：围绕中国区域轻微摆动
-- 重置视角：回到初始构图
+| 命令 | 说明 |
+| --- | --- |
+| `npm run dev` | 启动 Vite 开发服务器 |
+| `npm run typecheck` | 运行 TypeScript 类型检查 |
+| `npm run build` | 构建演示页面 |
+| `npm run build:lib` | 构建公共库到 `dist-lib/` |
+| `npm run build:npm-sample` | 重新生成 npm 依赖关系数据快照 |
+| `npm run preview` | 在 `http://127.0.0.1:4317` 预览构建结果 |
 
-## 说明
+完成修改后至少运行：
 
-- 天地图 WFS 已返回 `Access-Control-Allow-Origin: *`，浏览器可直接请求；本 Demo 为了稳定和性能使用离线快照。
-- 使用时请遵守天地图服务条款，并保留页面右下角的数据来源标注。
-- 线位已按国家尺度简化，不能用作工程测量或导航数据。
+```bash
+npm run typecheck
+npm run build
+```
+
+修改公共库或类型声明时额外运行：
+
+```bash
+npm run build:lib
+```
+
+浏览器侧还应确认没有 WebGL shader 编译错误，且 `renderer.gl.getError()` 返回 `0`。
+
+## 相关文档
+
+- [库 API 与使用方式](docs/library.md)
+- [高性能关系图实现](docs/high-performance-graph.md)
+- [大图压测与指标](docs/performance-testing.md)
+- [工程架构与约束](AGENTS.md)

@@ -1,11 +1,14 @@
 import "./library-demo.css";
 import { GraphDataService } from "./graph/GraphDataService";
+import { objectGraphInputExample } from "./examples/relationship-payload";
 import { GraphView } from "./lib";
 import type {
   EdgeStyleName,
   GraphGenerationOptions,
-  NodeShapeName,
+  GraphPayload,
   NodeDetails,
+  NodeShapeName,
+  ObjectGraphPayload,
 } from "./lib/types";
 
 /** 可选择的压测预设。 */
@@ -310,6 +313,21 @@ function setupConfigurationControls(): void {
     "#clear-selection",
   ).addEventListener("click", () => graphView.select(null));
 
+  const uploadButton =
+    getRequiredElement<HTMLButtonElement>("#upload-data");
+  const downloadButton =
+    getRequiredElement<HTMLButtonElement>("#download-sample");
+  const fileInput =
+    getRequiredElement<HTMLInputElement>("#graph-file-input");
+  uploadButton.addEventListener("click", () => fileInput.click());
+  downloadButton.addEventListener("click", downloadExampleGraph);
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file) {
+      void importGraphFile(file, fileInput);
+    }
+  });
+
   const nodeShapeSelect =
     getRequiredElement<HTMLSelectElement>("#node-shape");
   nodeShapeSelect.addEventListener("change", () => {
@@ -348,6 +366,15 @@ function setupConfigurationControls(): void {
     initialValue: style.nodeScale,
     format: (value) => `${value.toFixed(1)}×`,
     apply: (value) => graphView.setStyle({ nodeScale: value }),
+  });
+  bindRangeControl({
+    input: getRequiredElement<HTMLInputElement>("#minimum-node-size"),
+    output: getRequiredElement<HTMLOutputElement>(
+      "#minimum-node-size-output",
+    ),
+    initialValue: style.minimumNodeSize,
+    format: (value) => `${value.toFixed(1)} px`,
+    apply: (value) => graphView.setStyle({ minimumNodeSize: value }),
   });
   bindRangeControl({
     input: getRequiredElement<HTMLInputElement>("#edge-width"),
@@ -395,6 +422,86 @@ function setupConfigurationControls(): void {
   });
 
   setConfigStatus("配置面板已就绪");
+}
+
+/**
+ * 读取用户上传的 JSON，并替换当前关系图数据。
+ *
+ * 支持 ObjectGraphPayload 和 SoA GraphPayload；解析或校验失败时保留
+ * 当前图不变，只在配置面板中显示错误信息。
+ *
+ * @param file - 用户选择的 JSON 文件。
+ * @param input - 文件输入控件，用于允许再次选择同一文件。
+ * @returns 无返回值。
+ */
+async function importGraphFile(
+  file: File,
+  input: HTMLInputElement,
+): Promise<void> {
+  setConfigStatus(`正在读取 ${file.name}…`);
+  try {
+    const text = await file.text();
+    const payload: unknown = JSON.parse(text);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("JSON 根节点必须是对象");
+    }
+
+    const uploadStartedAt = performance.now();
+    const data = graphView.setData(
+      payload as GraphPayload | ObjectGraphPayload,
+    );
+    const uploadMs = performance.now() - uploadStartedAt;
+    document
+      .querySelectorAll<HTMLButtonElement>("[data-preset]")
+      .forEach((button) => button.classList.remove("is-active"));
+    document.title =
+      `${formatCount(data.nodeCount)} 节点 · ` +
+      `${formatCount(data.edgeCount)} 边 · 上传数据`;
+    graphView.canvas.setAttribute(
+      "aria-label",
+      `${formatCount(data.nodeCount)} 个节点和 ` +
+        `${formatCount(data.edgeCount)} 条边的上传关系图`,
+    );
+    window.graphStressInfo = {
+      preset: "uploaded",
+      nodeCount: data.nodeCount,
+      edgeCount: data.edgeCount,
+      generationMs: 0,
+      loadMs: 0,
+      uploadMs,
+    };
+    setConfigStatus(
+      `${file.name} · ${formatCount(data.nodeCount)} 节点 · ` +
+        `${formatCount(data.edgeCount)} 边`,
+    );
+    console.info("[traffic-graph upload]", window.graphStressInfo);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setConfigStatus(`上传失败：${message}`);
+    console.error("[traffic-graph upload]", error);
+  } finally {
+    input.value = "";
+  }
+}
+
+/**
+ * 下载可直接上传的对象图 JSON 示例。
+ *
+ * @returns 无返回值。
+ */
+function downloadExampleGraph(): void {
+  const content = `${JSON.stringify(objectGraphInputExample, null, 2)}\n`;
+  const blob = new Blob([content], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "relationship-graph-example.json";
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setConfigStatus("示例数据已下载，可直接修改后上传");
 }
 
 /**

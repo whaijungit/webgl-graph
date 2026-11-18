@@ -9,6 +9,7 @@
 - `GraphView.setData()` 同时接受运行时 `GraphData`、SoA `GraphPayload` 和业务对象图 `ObjectGraphPayload`。
 - 默认演示数据为 **100 个节点 / 3,000 条边 / 10 个社区**。
 - 默认节点外观为图片图标；节点数达到 `100,000` 后切换为 Point Sprite 大图路径。
+- 数据规模区域支持 JSON 上传和示例数据下载；上传数据通过 `GraphView.setData()` 装载。
 - 当前仓库分支为 `dev`，远程名为 `origin`。
 
 ## 运行与验证
@@ -163,7 +164,7 @@ graph.setData({
 - 每个节点使用一个 Point Sprite 顶点，图标由 `nodeIconIds` 在片元着色器中绘制。
 - 当前视口内的全部节点必须写入 Point Sprite 索引，不得按节点预算或实例序号抽样。
 - 当前焦点必须最后提交，直接邻居紧随其后，避免被普通节点覆盖。
-- 远景 Point Sprite 使用约 `2～6px` 的尺寸，放大后增长到约 `3～18px`。
+- 远景 Point Sprite 使用可调 `minimumNodeSize` 下限，默认约 `3～9px`；放大后继续按权重增长。
 - 关联节点至少约 `24px`，当前节点约 `40～60px`。
 - 大图不创建 `HighlightOverlayRenderer` 绘制，选中状态仍为 2 个 draw call。
 
@@ -191,6 +192,7 @@ graph.setData({
 - 不要为节点创建 DOM `<img>`、SVG、独立 Canvas 或逐节点 DOM 文本。
 - 节点标签必须共用一个 Canvas 2D 图层；节点数超过 200 后启用碰撞过滤和预算。
 - 标签预算应随实时 FPS 降级和恢复；焦点与直接邻居标签始终绕过普通标签预算。
+- 低权重节点必须保留可调整的 `minimumNodeSize` 像素下限，不能因权重继续缩小到不可见。
 - 不要把平滑边退化为 `gl.LINES`。
 
 ## 样式配置
@@ -206,6 +208,7 @@ graphView.setStyle({
   showLabels: true,
   labelFontSize: 10,
   nodeScale: 1,
+  minimumNodeSize: 3,
   edgeWidthScale: 1,
   showEdges: true,
   highlightColor: [0.42, 0.95, 1, 0.95],

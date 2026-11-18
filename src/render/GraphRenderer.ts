@@ -320,8 +320,7 @@ export class GraphRenderer {
       }
       const nodeScale =
         this.#calculateNodeScale(camera) * this.style.nodeScale;
-      const minimumNodeSize =
-        this.#calculateMinimumNodeSize(camera);
+      const minimumNodeSize = this.style.minimumNodeSize;
       this.nodeRenderer.draw(
         camera,
         hoverId,
@@ -724,24 +723,4 @@ export class GraphRenderer {
     return densityScale + (1 - densityScale) * zoomProgress;
   }
 
-  /**
-   * 计算远景节点最小屏幕尺寸。
-   *
-   * @param camera - 当前相机。
-   * @returns 最小节点尺寸。
-   */
-  #calculateMinimumNodeSize(camera: Camera2D): number {
-    const nodeCount = this.nodeRenderer.nodeCount;
-    const isImage = this.style.nodeShape === 7;
-
-    if (nodeCount >= 100_000 && camera.scale < 0.7) {
-      return isImage ? 2.0 : 1.2;
-    }
-
-    if (nodeCount >= 100_000 && camera.scale < 1.45) {
-      return isImage ? 3.2 : 1.8;
-    }
-
-    return isImage ? 5.0 : 2.4;
-  }
 }

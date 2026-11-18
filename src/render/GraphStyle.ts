@@ -49,6 +49,8 @@ export class GraphStyle {
   edgeDimOpacity: number;
   /** 节点尺寸倍数。 */
   nodeScale: number;
+  /** Minimum on-screen node size in CSS pixels. */
+  minimumNodeSize: number;
   /** 权重差异强度。 */
   weightStrength: number;
   /** 标签总开关。 */
@@ -73,6 +75,7 @@ export class GraphStyle {
     this.dimOpacity = 0.1;
     this.edgeDimOpacity = 0.035;
     this.nodeScale = 1;
+    this.minimumNodeSize = 3;
     this.weightStrength = 1;
     this.showLabels = true;
     this.labelFontSize = 10;
@@ -112,6 +115,13 @@ export class GraphStyle {
     }
     if (Number.isFinite(patch.nodeScale)) {
       this.nodeScale = this.#clamp(patch.nodeScale as number, 0.2, 3);
+    }
+    if (Number.isFinite(patch.minimumNodeSize)) {
+      this.minimumNodeSize = this.#clamp(
+        patch.minimumNodeSize as number,
+        1,
+        20,
+      );
     }
     if (Number.isFinite(patch.weightStrength)) {
       this.weightStrength = this.#clamp(
@@ -157,6 +167,7 @@ export class GraphStyle {
       dimOpacity: this.dimOpacity,
       edgeDimOpacity: this.edgeDimOpacity,
       nodeScale: this.nodeScale,
+      minimumNodeSize: this.minimumNodeSize,
       weightStrength: this.weightStrength,
       showLabels: this.showLabels,
       labelFontSize: this.labelFontSize,

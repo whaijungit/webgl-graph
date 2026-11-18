@@ -107,12 +107,7 @@ void main() {
     weight
   );
   float size = aSize * uNodeScale * weightScale;
-  float weightFloor = uMinimumSize * mix(
-    1.0 - uWeightStrength * 0.5,
-    1.0,
-    weight
-  );
-  size = max(size, max(1.1, weightFloor));
+  size = max(size, max(1.1, uMinimumSize));
   if (uHighlightActive == 1u && isRelated) {
     size = max(
       size * (isSelected ? 1.9 : 1.45),

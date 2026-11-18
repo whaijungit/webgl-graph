@@ -1,0 +1,60 @@
+{
+  "source": {
+    "registry": "https://registry.npmjs.org/",
+    "packageUrl": "https://www.npmjs.com/package/vite",
+    "capturedAt": "2026-11-17T00:00:00.000Z"
+  },
+  "root": "china-transport-globe@1.0.0",
+  "groups": [
+    {
+      "id": "root",
+      "label": "china-transport-globe"
+    },
+    {
+      "id": "vite",
+      "label": "vite"
+    },
+    {
+      "id": "vite:rollup",
+      "label": "vite › rollup"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "china-transport-globe@1.0.0",
+      "name": "china-transport-globe",
+      "version": "1.0.0",
+      "license": "UNLICENSED",
+      "kind": "root",
+      "branch": "root"
+    },
+    {
+      "id": "vite@7.0.0",
+      "name": "vite",
+      "version": "7.0.0",
+      "license": "MIT",
+      "kind": "devDependency",
+      "branch": "vite"
+    },
+    {
+      "id": "rollup@4.0.0",
+      "name": "rollup",
+      "version": "4.0.0",
+      "license": "MIT",
+      "kind": "dependency",
+      "branch": "vite:rollup"
+    }
+  ],
+  "edges": [
+    {
+      "source": "china-transport-globe@1.0.0",
+      "target": "vite@7.0.0",
+      "kind": "devDependency"
+    },
+    {
+      "source": "vite@7.0.0",
+      "target": "rollup@4.0.0",
+      "kind": "dependency"
+    }
+  ]
+}

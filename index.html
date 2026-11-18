@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0"
+    />
+    <meta
+      name="description"
+      content="基于 WebGL2 实例化渲染的高性能关系网络演示"
+    />
+    <title>高性能关系网络 · WebGL2</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas
+        id="graph-canvas"
+        aria-label="可拖拽和缩放的高性能关系网络图"
+      ></canvas>
+      <button
+        id="config-toggle"
+        class="config-toggle"
+        type="button"
+        aria-controls="config-panel"
+        aria-expanded="false"
+      >
+        配置
+      </button>
+      <aside
+        id="config-panel"
+        class="config-panel"
+        aria-label="图配置"
+        hidden
+      >
+        <header class="config-header">
+          <strong>图配置</strong>
+          <button id="config-close" type="button">收起</button>
+        </header>
+
+        <section class="config-section">
+          <h2>数据规模</h2>
+          <div class="config-button-grid">
+            <button type="button" data-preset="default">100</button>
+            <button type="button" data-preset="100k">10 万</button>
+            <button type="button" data-preset="300k">30 万</button>
+            <button type="button" data-preset="600k">60 万</button>
+            <button type="button" data-preset="1m">100 万</button>
+          </div>
+        </section>
+
+        <section class="config-section">
+          <h2>视图</h2>
+          <div class="config-button-grid">
+            <button id="zoom-out" type="button">缩小 −</button>
+            <button id="zoom-in" type="button">放大 ＋</button>
+            <button id="fit-view" type="button">适配</button>
+            <button id="clear-selection" type="button">清除选择</button>
+          </div>
+        </section>
+
+        <section class="config-section">
+          <h2>外观</h2>
+          <label class="config-field">
+            <span>节点形状</span>
+            <select id="node-shape">
+              <option value="image" selected>图片图标</option>
+              <option value="circle">圆形</option>
+              <option value="square">方形</option>
+              <option value="diamond">菱形</option>
+              <option value="triangle">三角形</option>
+              <option value="hexagon">六边形</option>
+              <option value="star">星形</option>
+              <option value="mixed">混合形状</option>
+            </select>
+          </label>
+          <label class="config-field">
+            <span>边样式</span>
+            <select id="edge-style">
+              <option value="straight" selected>直线</option>
+              <option value="curve">曲线</option>
+              <option value="dashed">虚线</option>
+            </select>
+          </label>
+          <label class="config-range">
+            <span>非关联透明度</span>
+            <input id="dim-opacity" type="range" min="0.02" max="0.8" step="0.02" />
+            <output id="dim-opacity-output"></output>
+          </label>
+          <label class="config-range">
+            <span>权重差异</span>
+            <input id="weight-strength" type="range" min="0" max="2" step="0.1" />
+            <output id="weight-strength-output"></output>
+          </label>
+          <label class="config-range">
+            <span>节点尺寸</span>
+            <input id="node-scale" type="range" min="0.2" max="3" step="0.1" />
+            <output id="node-scale-output"></output>
+          </label>
+          <label class="config-range">
+            <span>边宽</span>
+            <input id="edge-width" type="range" min="0.1" max="3" step="0.1" />
+            <output id="edge-width-output"></output>
+          </label>
+          <label class="config-range">
+            <span>标签字号</span>
+            <input id="label-font-size" type="range" min="7" max="18" step="1" />
+            <output id="label-font-size-output"></output>
+          </label>
+        </section>
+
+        <section class="config-section">
+          <h2>显示</h2>
+          <label class="config-toggle-row">
+            <input id="show-labels" type="checkbox" />
+            <span>节点标签</span>
+          </label>
+          <label class="config-toggle-row">
+            <input id="show-edges" type="checkbox" />
+            <span>关系边</span>
+          </label>
+          <label class="config-toggle-row">
+            <input id="continuous-render" type="checkbox" />
+            <span>持续渲染</span>
+          </label>
+          <label class="config-range">
+            <span>目标 FPS</span>
+            <input id="target-fps" type="range" min="30" max="60" step="1" />
+            <output id="target-fps-output"></output>
+          </label>
+        </section>
+
+        <p id="config-status" class="config-status" aria-live="polite"></p>
+      </aside>
+      <aside
+        id="neighborhood-panel"
+        class="neighborhood-panel"
+        aria-labelledby="neighborhood-title"
+        hidden
+      >
+        <header class="neighborhood-header">
+          <div>
+            <span class="neighborhood-eyebrow">当前节点</span>
+            <strong id="neighborhood-title"></strong>
+          </div>
+          <button
+            id="neighborhood-close"
+            type="button"
+            aria-label="清除节点选择并关闭关联节点面板"
+          >
+            关闭
+          </button>
+        </header>
+        <p
+          id="neighborhood-summary"
+          class="neighborhood-summary"
+          aria-live="polite"
+        ></p>
+        <ul id="neighborhood-list" class="neighborhood-list"></ul>
+      </aside>
+    </main>
+    <script src="./src/main.ts" type="module"></script>
+  </body>
+</html>

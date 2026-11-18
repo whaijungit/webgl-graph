@@ -1,0 +1,308 @@
+:root {
+  color-scheme: light;
+  font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #030b12;
+  color: #e8f7ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: #030b12;
+}
+
+#graph-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  background: #030b12;
+  touch-action: none;
+}
+
+#graph-canvas.is-dragging {
+  cursor: grabbing;
+}
+
+#graph-canvas.is-dragging-node {
+  cursor: move;
+}
+
+#graph-canvas.is-hovering-node {
+  cursor: pointer;
+}
+
+.config-toggle {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 20;
+  min-width: 64px;
+  padding: 9px 14px;
+  border: 1px solid rgba(131, 225, 255, 0.38);
+  border-radius: 8px;
+  background: rgba(8, 22, 31, 0.96);
+  color: #dff8ff;
+  font: 600 13px/1.2 inherit;
+  cursor: pointer;
+}
+
+.config-toggle:hover,
+.config-toggle:focus-visible {
+  border-color: #53e1ff;
+  outline: none;
+}
+
+.config-panel {
+  position: fixed;
+  top: 58px;
+  left: 14px;
+  z-index: 20;
+  width: min(300px, calc(100vw - 28px));
+  max-height: calc(100vh - 72px);
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid rgba(131, 225, 255, 0.3);
+  border-radius: 12px;
+  background: rgba(7, 20, 28, 0.97);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
+  color: #dff8ff;
+  font: 12px/1.45 Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.config-panel[hidden] {
+  display: none;
+}
+
+.config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.config-header strong {
+  font-size: 14px;
+  letter-spacing: 0.08em;
+}
+
+.config-header button,
+.config-button-grid button {
+  border: 1px solid rgba(131, 225, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(23, 48, 61, 0.9);
+  color: #dff8ff;
+  cursor: pointer;
+}
+
+.config-header button {
+  padding: 5px 9px;
+}
+
+.config-button-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.config-button-grid button {
+  padding: 7px 8px;
+}
+
+.config-button-grid button.is-active {
+  border-color: #53e1ff;
+  background: rgba(28, 104, 129, 0.72);
+  color: #ffffff;
+}
+
+.config-section {
+  padding: 11px 0;
+  border-top: 1px solid rgba(131, 225, 255, 0.14);
+}
+
+.config-section h2 {
+  margin: 0 0 9px;
+  color: #83e1ff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.config-field,
+.config-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.config-field select {
+  width: 150px;
+  padding: 6px 8px;
+  border: 1px solid rgba(131, 225, 255, 0.26);
+  border-radius: 6px;
+  background: #102632;
+  color: #e8fbff;
+}
+
+.config-range {
+  display: grid;
+  grid-template-columns: minmax(82px, 1fr) minmax(90px, 1.3fr) 48px;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.config-range input {
+  width: 100%;
+  accent-color: #53e1ff;
+}
+
+.config-range output {
+  color: #9fe9ff;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.config-toggle-row {
+  justify-content: flex-start;
+}
+
+.config-toggle-row input {
+  accent-color: #53e1ff;
+}
+
+.config-toggle-row input:disabled + span {
+  opacity: 0.45;
+}
+
+.config-status {
+  margin: 8px 0 0;
+  color: #8aaab8;
+  font-size: 11px;
+}
+
+.neighborhood-panel {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 20;
+  display: flex;
+  width: min(280px, calc(100vw - 28px));
+  max-height: calc(100vh - 28px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(131, 225, 255, 0.3);
+  border-radius: 12px;
+  background: rgba(7, 20, 28, 0.97);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
+  color: #dff8ff;
+  font: 12px/1.45 Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.neighborhood-panel[hidden] {
+  display: none;
+}
+
+.neighborhood-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px 10px;
+  border-bottom: 1px solid rgba(131, 225, 255, 0.14);
+}
+
+.neighborhood-header strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 14px;
+}
+
+.neighborhood-eyebrow {
+  color: #83e1ff;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.neighborhood-header button {
+  flex: none;
+  padding: 5px 9px;
+  border: 1px solid rgba(131, 225, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(23, 48, 61, 0.9);
+  color: #dff8ff;
+  cursor: pointer;
+}
+
+.neighborhood-summary {
+  margin: 0;
+  padding: 9px 14px;
+  color: #9fe9ff;
+  font-size: 11px;
+}
+
+.neighborhood-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0 8px 8px;
+  overflow: auto;
+  list-style: none;
+}
+
+.neighborhood-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid rgba(131, 225, 255, 0.14);
+  border-radius: 7px;
+  background: rgba(14, 34, 45, 0.82);
+  color: #e8fbff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.neighborhood-item:hover,
+.neighborhood-item:focus-visible {
+  border-color: rgba(83, 225, 255, 0.72);
+  background: rgba(24, 69, 84, 0.92);
+}
+
+.neighborhood-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.neighborhood-item-meta {
+  flex: none;
+  color: #8bb7c5;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid rgba(83, 225, 255, 0.72);
+  outline-offset: 2px;
+}

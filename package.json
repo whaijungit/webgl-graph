@@ -1,0 +1,32 @@
+{
+  "name": "china-transport-globe",
+  "private": false,
+  "version": "1.0.0",
+  "type": "module",
+  "module": "./dist-lib/traffic-graph.js",
+  "main": "./dist-lib/traffic-graph.js",
+  "exports": {
+    ".": {
+      "types": "./src/lib/index.d.ts",
+      "import": "./dist-lib/traffic-graph.js"
+    }
+  },
+  "types": "./src/lib/index.d.ts",
+  "files": [
+    "dist-lib",
+    "src/lib/index.d.ts"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dev": "vite --host",
+    "build": "vite build",
+    "build:lib": "vite build --config vite.lib.config.ts",
+    "build:npm-sample": "node scripts/build-npm-dependency-sample.ts",
+    "preview": "vite preview --host 127.0.0.1 --port 4317"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "5.9.3",
+    "vite": "^7.0.0"
+  }
+}

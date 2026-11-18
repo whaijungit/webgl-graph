@@ -14,12 +14,26 @@ interface EdgeRenderOptions {
   dimOpacity?: number;
   /** 线宽倍数。 */
   widthScale?: number;
+  /** 是否绘制方向箭头。 */
+  showArrows?: boolean;
+  /** 节点屏幕尺寸倍数。 */
+  nodeScale?: number;
+  /** 节点最小屏幕尺寸。 */
+  minimumSize?: number;
+  /** 权重对节点尺寸的影响强度。 */
+  weightStrength?: number;
+  /** 当前节点形状 shader ID。 */
+  nodeShape?: number;
+  /** 当前是否使用 Point Sprite 节点路径。 */
+  pointRendering?: boolean;
+  /** 图片选中邻域覆盖层的平滑缩放倍率。 */
+  highlightRadiusScale?: number;
 }
 
 const EDGE_VERTEX_SHADER = `#version 300 es
 precision highp float;
 
-layout(location = 0) in vec2 aCorner;
+layout(location = 0) in vec3 aCorner;
 layout(location = 1) in vec2 aStart;
 layout(location = 2) in vec2 aEnd;
 layout(location = 3) in float aWidth;
@@ -27,6 +41,7 @@ layout(location = 4) in vec4 aColor;
 layout(location = 5) in uint aSource;
 layout(location = 6) in uint aTarget;
 layout(location = 7) in uint aVisible;
+layout(location = 8) in vec4 aEndpointMetrics;
 
 uniform vec2 uViewport;
 uniform vec2 uCenter;
@@ -36,6 +51,12 @@ uniform uint uEdgeStyle;
 uniform uint uHighlightActive;
 uniform float uDimOpacity;
 uniform float uWidthScale;
+uniform float uNodeScale;
+uniform float uMinimumSize;
+uniform float uWeightStrength;
+uniform float uHighlightRadiusScale;
+uniform uint uNodeShape;
+uniform uint uPointRendering;
 
 out vec4 vColor;
 out float vDashCoord;
@@ -44,6 +65,83 @@ out float vGeometryWidth;
 flat out float vCoreWidth;
 flat out uint vStyle;
 flat out uint vSolid;
+flat out uint vArrow;
+
+float endpointRadius(
+  float baseSize,
+  float weight,
+  bool isFocus,
+  bool isRelated,
+  uint nodeId,
+  vec2 direction
+) {
+  float safeWeight = clamp(weight, 0.0, 1.0);
+  float weightScale = mix(
+    1.0 - uWeightStrength * 0.34,
+    1.0 + uWeightStrength * 1.55,
+    safeWeight
+  );
+  float size = max(
+    max(1.1, baseSize * uNodeScale * weightScale),
+    uMinimumSize
+  );
+
+  if (uNodeShape == 7u && uPointRendering == 0u && isRelated) {
+    // 图片选中邻域只由 HighlightOverlayRenderer 绘制，需使用同一个缩放倍率。
+    size =
+      (isFocus
+        ? 24.0 + safeWeight * 8.0
+        : 15.0 + safeWeight * 6.0) *
+      uHighlightRadiusScale;
+  } else if (uPointRendering == 1u) {
+    if (isFocus) {
+      size += 3.0;
+    }
+    float weightPointSize = mix(
+      uMinimumSize,
+      uMinimumSize * 3.0,
+      clamp(pow(safeWeight, 0.7) * uWeightStrength, 0.0, 1.0)
+    );
+    size = max(size, weightPointSize);
+    if (isFocus) {
+      size = max(size * 1.5, 32.0);
+    }
+    if (isRelated) {
+      size = max(
+        size * (isFocus ? 1.2 : 1.45),
+        isFocus ? 40.0 : 24.0
+      );
+    }
+  } else if (isRelated) {
+    size = max(size * (isFocus ? 1.9 : 1.45), isFocus ? 12.0 : 9.0);
+    if (isFocus) {
+      size += 4.5;
+    }
+  }
+
+  uint shape = uNodeShape == 6u ? nodeId % 6u : uNodeShape;
+  vec2 absoluteDirection = abs(direction);
+  float maxAxis = max(max(absoluteDirection.x, absoluteDirection.y), 0.0001);
+  float boundaryScale;
+  if (shape == 1u) {
+    boundaryScale = 0.72 / maxAxis;
+  } else if (shape == 2u) {
+    boundaryScale =
+      0.9 / max(absoluteDirection.x + absoluteDirection.y, 0.0001);
+  } else if (shape == 7u) {
+    // 图标是带圆角和内边距的圆角方块，使用内切轮廓避免斜向留下空隙。
+    boundaryScale = 0.93;
+  } else if (shape == 3u) {
+    boundaryScale = 1.0;
+  } else if (shape == 4u) {
+    boundaryScale = 0.9;
+  } else if (shape == 5u) {
+    boundaryScale = 0.95;
+  } else {
+    boundaryScale = 0.82;
+  }
+  return max(0.0, size * boundaryScale);
+}
 
 void main() {
   bool isFocused = aSource == uFocusId || aTarget == uFocusId;
@@ -58,6 +156,7 @@ void main() {
     vCoreWidth = 1.0;
     vStyle = uEdgeStyle;
     vSolid = 0u;
+    vArrow = aCorner.z > 0.5 ? 1u : 0u;
     return;
   }
 
@@ -67,20 +166,62 @@ void main() {
   }
   float geometryWidth = coreWidth + 2.0;
 
-  vec2 screenA = (aStart - uCenter) * uScale + uViewport * 0.5;
-  vec2 screenB = (aEnd - uCenter) * uScale + uViewport * 0.5;
+  vec2 rawA = (aStart - uCenter) * uScale + uViewport * 0.5;
+  vec2 rawB = (aEnd - uCenter) * uScale + uViewport * 0.5;
+  vec2 rawDirection = rawB - rawA;
+  float rawLength = max(length(rawDirection), 0.0001);
+  vec2 rawUnit = rawDirection / rawLength;
+  bool edgeFocused =
+    uFocusId != 0xffffffffu &&
+    (aSource == uFocusId || aTarget == uFocusId);
+  float sourceRadius = endpointRadius(
+    aEndpointMetrics.x,
+    aEndpointMetrics.z,
+    aSource == uFocusId,
+    edgeFocused,
+    aSource,
+    rawUnit
+  );
+  float targetRadius = endpointRadius(
+    aEndpointMetrics.y,
+    aEndpointMetrics.w,
+    aTarget == uFocusId,
+    edgeFocused,
+    aTarget,
+    rawUnit
+  );
+  vec2 screenA =
+    rawA + rawUnit * min(sourceRadius, rawLength * 0.42);
+  vec2 screenB =
+    rawB - rawUnit * min(targetRadius, rawLength * 0.42);
   vec2 direction = screenB - screenA;
   float chordLength = max(length(direction), 0.0001);
-  float t = (aCorner.x + 1.0) * 0.5;
-  vec2 lineCenter;
-  vec2 tangent;
   float approximateLength = chordLength;
+  vec2 control = vec2(0.0);
 
   if (uEdgeStyle == 1u) {
     vec2 chordNormal = vec2(-direction.y, direction.x) / chordLength;
-    vec2 control =
+    control =
       (screenA + screenB) * 0.5 +
       chordNormal * clamp(chordLength * 0.2, 4.0, 72.0);
+    approximateLength =
+      length(control - screenA) + length(screenB - control);
+  }
+
+  bool isArrow = aCorner.z > 0.5;
+  float t;
+  if (isArrow) {
+    float safeLength = max(approximateLength, 1.0);
+    float headLength = clamp(coreWidth * 3.0 + 8.0, 12.0, 26.0);
+    float headT = min(headLength / safeLength, 0.42);
+    t = aCorner.x < 2.5 ? 1.0 : 1.0 - headT;
+  } else {
+    t = (aCorner.x + 1.0) * 0.5;
+  }
+
+  vec2 lineCenter;
+  vec2 tangent;
+  if (uEdgeStyle == 1u) {
     float inverseT = 1.0 - t;
     lineCenter =
       inverseT * inverseT * screenA +
@@ -89,8 +230,6 @@ void main() {
     tangent =
       2.0 * inverseT * (control - screenA) +
       2.0 * t * (screenB - control);
-    approximateLength =
-      length(control - screenA) + length(screenB - control);
   } else {
     lineCenter = mix(screenA, screenB, t);
     tangent = direction;
@@ -116,6 +255,7 @@ void main() {
   vCoreWidth = coreWidth;
   vStyle = uEdgeStyle;
   vSolid = isFocused ? 1u : 0u;
+  vArrow = isArrow ? 1u : 0u;
 }
 `;
 
@@ -129,9 +269,15 @@ in float vGeometryWidth;
 flat in float vCoreWidth;
 flat in uint vStyle;
 flat in uint vSolid;
+flat in uint vArrow;
 out vec4 outColor;
 
 void main() {
+  if (vArrow != 0u) {
+    outColor = vColor;
+    return;
+  }
+
   float distanceFromCenter =
     abs(vSide) * vGeometryWidth * 0.5;
   float halfCoreWidth = vCoreWidth * 0.5;
@@ -176,10 +322,12 @@ export class EdgeRenderer {
   edgeCount: number;
   /** 当前压缩缓冲中的可见边数量。 */
   private activeEdgeCount: number;
-  /** 当前单实例顶点数量。 */
+  /** 当前单实例线段顶点数量。 */
   private vertexCount: number;
+  /** 当前单实例箭头顶点数量。 */
+  private arrowVertexCount: number;
   /** 当前几何是否为曲线细分。 */
-  private isCurvedGeometry: boolean;
+  private isCurvedGeometry: boolean | null;
   /** 边可见性缓冲。 */
   private visibilityBuffer: WebGLBuffer | null;
   /** 边端点位置缓冲。 */
@@ -192,6 +340,8 @@ export class EdgeRenderer {
   private sourceBuffer: WebGLBuffer | null;
   /** 边终点实例缓冲。 */
   private targetBuffer: WebGLBuffer | null;
+  /** 边起止节点屏幕半径实例缓冲。 */
+  private endpointMetricsBuffer: WebGLBuffer | null;
   /** 全量边索引到压缩缓冲索引的映射。 */
   private compactIndexByEdge: Uint32Array | null;
   /** 全量边对应的压缩缓冲版本号。 */
@@ -220,14 +370,16 @@ export class EdgeRenderer {
     this.instanceBuffers = [];
     this.edgeCount = 0;
     this.activeEdgeCount = 0;
-    this.vertexCount = 4;
-    this.isCurvedGeometry = false;
+    this.vertexCount = 0;
+    this.arrowVertexCount = 3;
+    this.isCurvedGeometry = null;
     this.visibilityBuffer = null;
     this.positionBuffer = null;
     this.widthBuffer = null;
     this.colorBuffer = null;
     this.sourceBuffer = null;
     this.targetBuffer = null;
+    this.endpointMetricsBuffer = null;
     this.compactIndexByEdge = null;
     this.compactGeneration = null;
     this.compactGenerationId = 0;
@@ -300,6 +452,18 @@ export class EdgeRenderer {
     gl.enableVertexAttribArray(7);
     gl.vertexAttribIPointer(7, 1, gl.UNSIGNED_BYTE, 1, 0);
     gl.vertexAttribDivisor(7, 1);
+    const endpointMetricsBuffer = this.#createBuffer(
+      new Float32Array(4),
+    );
+    this.#configureInstanceBuffer(
+      8,
+      endpointMetricsBuffer,
+      4,
+      gl.FLOAT,
+      false,
+      16,
+      0,
+    );
 
     this.instanceBuffers.push(
       this.positionBuffer,
@@ -308,6 +472,7 @@ export class EdgeRenderer {
       sourceBuffer,
       targetBuffer,
       this.visibilityBuffer,
+      endpointMetricsBuffer,
     );
     this.edgeCount = graphData.edgeCount;
     this.activeEdgeCount = 0;
@@ -317,6 +482,7 @@ export class EdgeRenderer {
     this.colorBuffer = colorBuffer;
     this.sourceBuffer = sourceBuffer;
     this.targetBuffer = targetBuffer;
+    this.endpointMetricsBuffer = endpointMetricsBuffer;
     this.compactIndexByEdge = new Uint32Array(graphData.edgeCount);
     this.compactGeneration = new Uint32Array(graphData.edgeCount);
     this.compactGenerationId = 0;
@@ -347,6 +513,13 @@ export class EdgeRenderer {
       highlightActive = false,
       dimOpacity = 0.035,
       widthScale = 1,
+      showArrows = true,
+      nodeScale = 1,
+      minimumSize = 3,
+      weightStrength = 1,
+      nodeShape = 7,
+      pointRendering = false,
+      highlightRadiusScale = 1,
     } = options;
 
     this.#ensureGeometry(edgeStyle === 1);
@@ -366,12 +539,26 @@ export class EdgeRenderer {
     );
     gl.uniform1f(program.uniform("uDimOpacity"), dimOpacity);
     gl.uniform1f(program.uniform("uWidthScale"), widthScale);
+    gl.uniform1f(program.uniform("uNodeScale"), nodeScale);
+    gl.uniform1f(program.uniform("uMinimumSize"), minimumSize);
+    gl.uniform1f(program.uniform("uWeightStrength"), weightStrength);
+    gl.uniform1f(
+      program.uniform("uHighlightRadiusScale"),
+      highlightRadiusScale,
+    );
+    gl.uniform1ui(program.uniform("uNodeShape"), nodeShape);
+    gl.uniform1ui(
+      program.uniform("uPointRendering"),
+      pointRendering ? 1 : 0,
+    );
 
     gl.bindVertexArray(this.vao);
+    const drawVertexCount =
+      this.vertexCount + (showArrows ? this.arrowVertexCount : 0);
     gl.drawArraysInstanced(
-      gl.TRIANGLE_STRIP,
+      gl.TRIANGLES,
       0,
-      this.vertexCount,
+      drawVertexCount,
       this.activeEdgeCount,
     );
     gl.bindVertexArray(null);
@@ -438,6 +625,7 @@ export class EdgeRenderer {
     const colorBuffer = this.colorBuffer;
     const sourceBuffer = this.sourceBuffer;
     const targetBuffer = this.targetBuffer;
+    const endpointMetricsBuffer = this.endpointMetricsBuffer;
     const visibilityBuffer = this.visibilityBuffer;
     const compactIndexByEdge = this.compactIndexByEdge;
     const compactGeneration = this.compactGeneration;
@@ -447,6 +635,7 @@ export class EdgeRenderer {
       !colorBuffer ||
       !sourceBuffer ||
       !targetBuffer ||
+      !endpointMetricsBuffer ||
       !visibilityBuffer ||
       !compactIndexByEdge ||
       !compactGeneration
@@ -461,6 +650,7 @@ export class EdgeRenderer {
     const colors = new Uint8Array(count * 4);
     const sources = new Uint32Array(count);
     const targets = new Uint32Array(count);
+    const endpointMetrics = new Float32Array(count * 4);
     const visibility = new Uint8Array(count);
     this.compactGenerationId += 1;
     if (this.compactGenerationId === 0xffffffff) {
@@ -487,6 +677,12 @@ export class EdgeRenderer {
         graphData.edgeColors[edgeIndex * 4 + 3];
       sources[compactIndex] = graphData.edgeSources[edgeIndex];
       targets[compactIndex] = graphData.edgeTargets[edgeIndex];
+      const source = sources[compactIndex];
+      const target = targets[compactIndex];
+      endpointMetrics[compactIndex * 4] = graphData.nodeSizes[source];
+      endpointMetrics[compactIndex * 4 + 1] = graphData.nodeSizes[target];
+      endpointMetrics[compactIndex * 4 + 2] = graphData.nodeWeights[source];
+      endpointMetrics[compactIndex * 4 + 3] = graphData.nodeWeights[target];
       visibility[compactIndex] = 1;
       compactIndexByEdge[edgeIndex] = compactIndex;
       compactGeneration[edgeIndex] = this.compactGenerationId;
@@ -497,6 +693,7 @@ export class EdgeRenderer {
     this.#uploadDynamicBuffer(colorBuffer, colors);
     this.#uploadDynamicBuffer(sourceBuffer, sources);
     this.#uploadDynamicBuffer(targetBuffer, targets);
+    this.#uploadDynamicBuffer(endpointMetricsBuffer, endpointMetrics);
     this.#uploadDynamicBuffer(visibilityBuffer, visibility);
     this.activeEdgeCount = count;
   }
@@ -568,11 +765,11 @@ export class EdgeRenderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
     gl.bufferData(
       gl.ARRAY_BUFFER,
-      new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+      new Float32Array(0),
       gl.STATIC_DRAW,
     );
     gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 8, 0);
+    gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
     gl.vertexAttribDivisor(0, 0);
     gl.bindVertexArray(null);
   }
@@ -609,21 +806,34 @@ export class EdgeRenderer {
           ? 8
           : 18
       : 1;
-    const corners = new Float32Array((segments + 1) * 4);
+    const corners: number[] = [];
 
-    for (let segment = 0; segment <= segments; segment += 1) {
-      const t = (segment / segments) * 2 - 1;
-      const offset = segment * 4;
-      corners[offset] = t;
-      corners[offset + 1] = -1;
-      corners[offset + 2] = t;
-      corners[offset + 3] = 1;
+    for (let segment = 0; segment < segments; segment += 1) {
+      const startT = (segment / segments) * 2 - 1;
+      const endT = ((segment + 1) / segments) * 2 - 1;
+      corners.push(
+        startT, -1, 0,
+        endT, -1, 0,
+        endT, 1, 0,
+        startT, -1, 0,
+        endT, 1, 0,
+        startT, 1, 0,
+      );
     }
+    corners.push(
+      2, 0, 1,
+      3, -4.5, 1,
+      4, 4.5, 1,
+    );
 
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, corners, gl.STATIC_DRAW);
-    this.vertexCount = corners.length / 2;
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array(corners),
+      gl.STATIC_DRAW,
+    );
+    this.vertexCount = corners.length / 3 - this.arrowVertexCount;
     this.isCurvedGeometry = curved;
   }
 

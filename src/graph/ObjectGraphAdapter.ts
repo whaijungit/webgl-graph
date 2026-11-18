@@ -7,6 +7,8 @@ import type {
 } from "../lib/types.js";
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const FIRST_CUSTOM_ICON_INDEX = 8;
+const GROUP_LAYOUT_GAP = 260;
 const COMMUNITY_COLORS: readonly string[] = [
   "#53e1ff",
   "#75f5b6",
@@ -102,6 +104,11 @@ export function createGraphPayloadFromObjectGraph(
   const nodeSizes = new Float32Array(nodes.length);
   const nodeWeights = new Float32Array(nodes.length);
   const nodeIconIds = new Uint8Array(nodes.length);
+  const nodeIconSources: Array<string | null> = new Array(nodes.length).fill(
+    null,
+  );
+  const customIconIndexBySource = new Map<string, number>();
+  const nodeColorOverrides = new Uint8Array(nodes.length);
   const nodeColors: ColorInput[] = new Array(nodes.length);
   const nodeLabels: string[] = new Array(nodes.length);
   const nodeKinds: string[] = new Array(nodes.length);
@@ -116,10 +123,28 @@ export function createGraphPayloadFromObjectGraph(
       node.size,
       node.kind === "root" ? 6.5 : resolveNodeSize(degrees[nodeIndex]),
     );
-    nodeIconIds[nodeIndex] = resolveIconId(node, nodeIndex);
+    const iconSource = node.icon?.trim();
+    if (iconSource) {
+      let iconId = customIconIndexBySource.get(iconSource);
+      if (iconId === undefined) {
+        iconId =
+          FIRST_CUSTOM_ICON_INDEX + customIconIndexBySource.size;
+        if (iconId > 255) {
+          throw new Error(
+            `自定义图标超过 248 个，无法放入共享图集：${iconSource}`,
+          );
+        }
+        customIconIndexBySource.set(iconSource, iconId);
+      }
+      nodeIconIds[nodeIndex] = iconId;
+      nodeIconSources[nodeIndex] = iconSource;
+    } else {
+      nodeIconIds[nodeIndex] = resolveIconId(node, nodeIndex);
+    }
     nodeColors[nodeIndex] =
       node.color ??
       COMMUNITY_COLORS[groupIndex % COMMUNITY_COLORS.length];
+    nodeColorOverrides[nodeIndex] = node.color !== undefined ? 1 : 0;
     nodeLabels[nodeIndex] = resolveNodeLabel(node);
     nodeKinds[nodeIndex] = node.kind ?? "node";
   }
@@ -142,7 +167,7 @@ export function createGraphPayloadFromObjectGraph(
     );
     edgeColors[edgeIndex] =
       edge.color ??
-      `${COMMUNITY_COLORS[nodeGroups[source] % COMMUNITY_COLORS.length]}80`;
+      `${COMMUNITY_COLORS[nodeGroups[source] % COMMUNITY_COLORS.length]}c0`;
     edgeKinds[edgeIndex] = edge.kind ?? edge.label ?? "relation";
   }
 
@@ -154,9 +179,11 @@ export function createGraphPayloadFromObjectGraph(
     nodePositions,
     nodeSizes,
     nodeColors,
+    nodeColorOverrides,
     nodeGroups,
     nodeWeights,
     nodeIconIds,
+    nodeIconSources,
     nodeLabels,
     nodeKinds,
     groupLabels: groups.map((group) => group.label ?? group.id),
@@ -268,10 +295,7 @@ function createNodePositions(
 
   groupMembers.forEach((memberIds, groupIndex) => {
     const center = centers[groupIndex];
-    const radius =
-      memberIds.length <= 1
-        ? 0
-        : Math.min(230, 46 + Math.sqrt(memberIds.length) * 52);
+    const radius = resolveGroupLayoutRadius(memberIds.length);
     memberIds.forEach((nodeIndex, localIndex) => {
       if (
         Number.isFinite(positions[nodeIndex].x) &&
@@ -307,23 +331,42 @@ function createGroupCenters(
   const outerGroups = groupMembers
     .map((members, index) => ({ members, index }))
     .filter((entry) => entry.members.length > 0);
-  const radius = Math.max(320, outerGroups.length * 72);
-  outerGroups.forEach((entry, order) => {
-    if (order === 0) {
-      centers[entry.index] = { x: 0, y: 0 };
-      return;
+  const groupRadii = outerGroups.map((entry) =>
+    resolveGroupLayoutRadius(entry.members.length),
+  );
+  const maxGroupRadius = Math.max(0, ...groupRadii);
+  const spacing = maxGroupRadius * 2 + GROUP_LAYOUT_GAP;
+  const columns = Math.max(
+    1,
+    Math.ceil(Math.sqrt(outerGroups.length * 1.45)),
+  );
+  const rows = Math.max(1, Math.ceil(outerGroups.length / columns));
+  const cells: Array<{ x: number; y: number; distance: number }> = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      const x = (column - (columns - 1) * 0.5) * spacing;
+      const y = (row - (rows - 1) * 0.5) * spacing;
+      cells.push({ x, y, distance: x * x + y * y });
     }
-    const angle =
-      -Math.PI * 0.5 +
-      ((order - 1) / Math.max(1, outerGroups.length - 1)) *
-        Math.PI *
-        2;
-    centers[entry.index] = {
-      x: Math.cos(angle) * radius,
-      y: Math.sin(angle) * radius,
-    };
+  }
+  cells.sort((left, right) => left.distance - right.distance);
+  outerGroups.forEach((entry, order) => {
+    const cell = cells[order];
+    centers[entry.index] = { x: cell.x, y: cell.y };
   });
   return centers;
+}
+
+/**
+ * 计算单个分组在自动布局中使用的世界坐标半径。
+ *
+ * @param memberCount - 分组内节点数量。
+ * @returns 分组节点散射半径。
+ */
+function resolveGroupLayoutRadius(memberCount: number): number {
+  return memberCount <= 1
+    ? 0
+    : Math.min(230, 46 + Math.sqrt(memberCount) * 52);
 }
 
 /**

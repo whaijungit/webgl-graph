@@ -1,4 +1,8 @@
 import { GraphData } from "../graph/GraphData.js";
+import {
+  createObjectGraphFromKnowledgeGraph,
+  isKnowledgeGraphPayload,
+} from "../graph/KnowledgeGraphAdapter.js";
 import { NodeAdjacencyIndex } from "../graph/NodeAdjacencyIndex.js";
 import {
   createGraphPayloadFromObjectGraph,
@@ -14,6 +18,7 @@ import type {
   GraphViewEventMap,
   GraphViewEventName,
   GraphViewOptions,
+  KnowledgeGraphPayload,
   NodeDetails,
   ObjectGraphPayload,
   RenderStyle,
@@ -90,6 +95,10 @@ export class GraphView {
   >;
   /** 观察 Canvas 尺寸变化的观察器。 */
   private readonly resizeObserver: ResizeObserver;
+  /** 当前设备像素比媒体查询。 */
+  private devicePixelRatioQuery: MediaQueryList | null;
+  /** 设备像素比变化处理函数。 */
+  private readonly handleDevicePixelRatioChange: () => void;
 
   /**
    * 创建关系图实例。
@@ -103,7 +112,10 @@ export class GraphView {
   ) {
     this.canvas = resolveCanvas(target);
     this.camera = new Camera2D();
-    this.renderer = new GraphRenderer(this.canvas);
+    this.renderer = new GraphRenderer(
+      this.canvas,
+      () => this.requestRender(),
+    );
     this.data = null;
     this.adjacencyIndex = null;
     this.nodeIndex = null;
@@ -125,11 +137,17 @@ export class GraphView {
     this.viewportHeight = 1;
     this.pixelRatio = 1;
     this.listeners = new Map();
+    this.devicePixelRatioQuery = null;
+    this.handleDevicePixelRatioChange = () => {
+      this.resize();
+      this.#observeDevicePixelRatio();
+    };
 
     this.renderer.setStyle(options.style ?? {});
     this.#createInteraction();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.canvas);
+    this.#observeDevicePixelRatio();
     this.resize();
     this.running = true;
     this.requestRender();
@@ -146,7 +164,11 @@ export class GraphView {
    * @returns 规范化后的 GraphData。
    */
   setData(
-    payload: GraphPayload | ObjectGraphPayload | GraphData,
+    payload:
+      | GraphPayload
+      | ObjectGraphPayload
+      | KnowledgeGraphPayload
+      | GraphData,
     options: SetDataOptions = {},
   ): GraphData {
     const data =
@@ -156,6 +178,10 @@ export class GraphView {
             normalizeGraphPayload(
               isObjectGraphPayload(payload)
                 ? createGraphPayloadFromObjectGraph(payload)
+                : isKnowledgeGraphPayload(payload)
+                  ? createGraphPayloadFromObjectGraph(
+                      createObjectGraphFromKnowledgeGraph(payload),
+                    )
                 : payload,
             ),
           );
@@ -509,9 +535,37 @@ export class GraphView {
       cancelAnimationFrame(this.frameHandle);
     }
     this.resizeObserver?.disconnect();
+    this.devicePixelRatioQuery?.removeEventListener(
+      "change",
+      this.handleDevicePixelRatioChange,
+    );
     this.interaction?.dispose();
     this.renderer.dispose();
     this.listeners.clear();
+  }
+
+  /**
+   * 监听当前设备像素比变化。
+   *
+   * `ResizeObserver` 只观察 CSS 尺寸，窗口拖到不同 DPR 显示器时不会触发，
+   * 因此需要额外监听 resolution 媒体查询。
+   *
+   * @returns 无返回值。
+   */
+  #observeDevicePixelRatio(): void {
+    this.devicePixelRatioQuery?.removeEventListener(
+      "change",
+      this.handleDevicePixelRatioChange,
+    );
+    const devicePixelRatio = window.devicePixelRatio || 1;
+    this.devicePixelRatioQuery = window.matchMedia(
+      `(resolution: ${devicePixelRatio}dppx)`,
+    );
+    this.devicePixelRatioQuery.addEventListener(
+      "change",
+      this.handleDevicePixelRatioChange,
+      { once: true },
+    );
   }
 
   /**

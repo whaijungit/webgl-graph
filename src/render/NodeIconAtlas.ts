@@ -1,6 +1,7 @@
-const ATLAS_COLUMNS = 4;
-const ATLAS_ROWS = 2;
+const ATLAS_COLUMNS = 16;
+const ATLAS_ROWS = 16;
 const CELL_SIZE = 128;
+const BASE_CELL_SIZE = 128;
 
 /**
  * 在单个 Canvas 纹理中生成并共享 8 种节点图标。
@@ -18,6 +19,10 @@ export class NodeIconAtlas {
   readonly context: CanvasRenderingContext2D;
   /** 上传到 GPU 的图集纹理。 */
   texture: WebGLTexture | null;
+  /** 自定义图集索引到来源 URL 的映射。 */
+  private readonly customSourceByIndex: Map<number, string>;
+  /** 串行化自定义图标装载，避免并发覆盖画布。 */
+  private loadQueue: Promise<boolean>;
 
   /**
    * 创建并上传节点图标图集。
@@ -36,8 +41,31 @@ export class NodeIconAtlas {
       throw new Error("无法创建节点图标图集上下文");
     }
     this.context = context;
+    this.customSourceByIndex = new Map();
+    this.loadQueue = Promise.resolve(false);
     this.#drawAtlas();
     this.texture = this.#createTexture();
+  }
+
+  /**
+   * 将逐节点自定义图标装入共享图集。
+   *
+   * @param sources - 与节点索引对齐的图标 URL 或 Data URL。
+   * @param iconIds - 与节点索引对齐的图集索引。
+   * @returns 图集是否发生更新。
+   */
+  loadCustomIcons(
+    sources: readonly (string | null)[] | null,
+    iconIds: Uint8Array,
+  ): Promise<boolean> {
+    if (!sources) {
+      return Promise.resolve(false);
+    }
+    const task = this.loadQueue.then(() =>
+      this.#loadCustomIcons(sources, iconIds),
+    );
+    this.loadQueue = task.catch(() => false);
+    return task;
   }
 
   /**
@@ -72,6 +100,8 @@ export class NodeIconAtlas {
   #drawAtlas(): void {
     const context = this.context;
     context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    context.save();
+    context.scale(CELL_SIZE / BASE_CELL_SIZE, CELL_SIZE / BASE_CELL_SIZE);
     const icons: Array<
       [string, (context: CanvasRenderingContext2D) => void]
     > = [
@@ -88,13 +118,13 @@ export class NodeIconAtlas {
     icons.forEach(([color, drawIcon], index) => {
       const column = index % this.columns;
       const row = Math.floor(index / this.columns);
-      const x = column * CELL_SIZE;
-      const y = row * CELL_SIZE;
+      const x = column * BASE_CELL_SIZE;
+      const y = row * BASE_CELL_SIZE;
       this.#drawTile(context, x, y, color);
       context.save();
       context.translate(
-        x + CELL_SIZE * 0.5,
-        y + CELL_SIZE * 0.5,
+        x + BASE_CELL_SIZE * 0.5,
+        y + BASE_CELL_SIZE * 0.5,
       );
       context.strokeStyle = "#f3fbff";
       context.fillStyle = "#f3fbff";
@@ -104,6 +134,105 @@ export class NodeIconAtlas {
       drawIcon(context);
       context.restore();
     });
+    context.restore();
+  }
+
+  /**
+   * 串行装载需要更新的自定义图标。
+   *
+   * @param sources - 与节点对齐的图标来源。
+   * @param iconIds - 与节点对齐的图集索引。
+   * @returns 是否更新了图集。
+   */
+  async #loadCustomIcons(
+    sources: readonly (string | null)[],
+    iconIds: Uint8Array,
+  ): Promise<boolean> {
+    const requested = new Map<number, string>();
+    for (let nodeIndex = 0; nodeIndex < sources.length; nodeIndex += 1) {
+      const source = sources[nodeIndex]?.trim();
+      const iconIndex = iconIds[nodeIndex];
+      if (source && iconIndex >= 8) {
+        requested.set(iconIndex, source);
+      }
+    }
+
+    let changed = false;
+    for (const [iconIndex, source] of requested) {
+      if (this.customSourceByIndex.get(iconIndex) === source) {
+        continue;
+      }
+      try {
+        const image = await loadImage(source);
+        this.#drawCustomImage(iconIndex, image);
+      } catch (error) {
+        console.warn(
+          `[traffic-graph icon] 无法加载自定义图标：${source}`,
+          error,
+        );
+        this.#drawMissingIcon(iconIndex);
+      }
+      this.customSourceByIndex.set(iconIndex, source);
+      changed = true;
+    }
+    if (changed) {
+      this.#uploadCanvas();
+    }
+    return changed;
+  }
+
+  /**
+   * 将自定义图片等比绘制到指定图集单元。
+   *
+   * @param iconIndex - 图集索引。
+   * @param image - 已解码图片。
+   * @returns 无返回值。
+   */
+  #drawCustomImage(iconIndex: number, image: HTMLImageElement): void {
+    const context = this.context;
+    const column = iconIndex % this.columns;
+    const row = Math.floor(iconIndex / this.columns);
+    const x = column * CELL_SIZE;
+    const y = row * CELL_SIZE;
+    const padding = 6;
+    const available = CELL_SIZE - padding * 2;
+    const scale = Math.min(
+      available / Math.max(1, image.naturalWidth),
+      available / Math.max(1, image.naturalHeight),
+    );
+    const width = Math.max(1, image.naturalWidth * scale);
+    const height = Math.max(1, image.naturalHeight * scale);
+    context.clearRect(x, y, CELL_SIZE, CELL_SIZE);
+    context.drawImage(
+      image,
+      x + (CELL_SIZE - width) * 0.5,
+      y + (CELL_SIZE - height) * 0.5,
+      width,
+      height,
+    );
+  }
+
+  /**
+   * 绘制自定义图标加载失败占位图。
+   *
+   * @param iconIndex - 图集索引。
+   * @returns 无返回值。
+   */
+  #drawMissingIcon(iconIndex: number): void {
+    const context = this.context;
+    const column = iconIndex % this.columns;
+    const row = Math.floor(iconIndex / this.columns);
+    const x = column * CELL_SIZE;
+    const y = row * CELL_SIZE;
+    context.clearRect(x, y, CELL_SIZE, CELL_SIZE);
+    context.fillStyle = "#334155";
+    context.fillRect(x + 6, y + 6, CELL_SIZE - 12, CELL_SIZE - 12);
+    context.fillStyle = "#ffffff";
+    context.font = "bold 56px sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText("?", x + CELL_SIZE * 0.5, y + CELL_SIZE * 0.52);
+    context.textAlign = "start";
   }
 
   /**
@@ -123,7 +252,13 @@ export class NodeIconAtlas {
   ): void {
     context.save();
     context.beginPath();
-    context.roundRect(x + 7, y + 7, CELL_SIZE - 14, CELL_SIZE - 14, 27);
+    context.roundRect(
+      x + 7,
+      y + 7,
+      BASE_CELL_SIZE - 14,
+      BASE_CELL_SIZE - 14,
+      27,
+    );
     context.fillStyle = color;
     context.fill();
     context.lineWidth = 5;
@@ -282,6 +417,26 @@ export class NodeIconAtlas {
   }
 
   /**
+   * 将自定义图标更新后的 Canvas 重新上传到现有纹理。
+   *
+   * @returns 无返回值。
+   */
+  #uploadCanvas(): void {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      this.canvas,
+    );
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  /**
    * 将 Canvas 图集上传为 WebGL 纹理。
    *
    * @returns 新纹理；创建失败时返回 `null`。
@@ -306,4 +461,25 @@ export class NodeIconAtlas {
     gl.bindTexture(gl.TEXTURE_2D, null);
     return texture;
   }
+}
+
+/**
+ * 加载并解码一张自定义图标图片。
+ *
+ * @param source - 图片 URL 或 Data URL。
+ * @returns 已解码图片。
+ */
+function loadImage(source: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.decoding = "async";
+    image.addEventListener("load", () => resolve(image), { once: true });
+    image.addEventListener(
+      "error",
+      () => reject(new Error("图片加载失败")),
+      { once: true },
+    );
+    image.src = source;
+  });
 }

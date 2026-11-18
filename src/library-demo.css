@@ -45,6 +45,14 @@ body {
   cursor: pointer;
 }
 
+.stats-fps-panel {
+  top: auto !important;
+  right: auto !important;
+  bottom: 14px !important;
+  left: 14px !important;
+  z-index: 20 !important;
+}
+
 .config-toggle {
   position: fixed;
   top: 14px;
@@ -158,6 +166,79 @@ body {
   border-radius: 6px;
   background: #102632;
   color: #e8fbff;
+}
+
+.node-search {
+  display: grid;
+  gap: 7px;
+}
+
+.node-search input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(131, 225, 255, 0.28);
+  border-radius: 7px;
+  background: #102632;
+  color: #e8fbff;
+  font: inherit;
+}
+
+.node-search input::placeholder {
+  color: #6f96a4;
+}
+
+.node-search-summary {
+  min-height: 16px;
+  margin: 0;
+  color: #8bb7c5;
+  font-size: 10px;
+}
+
+.node-search-results {
+  display: grid;
+  max-height: 220px;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.node-search-results[hidden] {
+  display: none;
+}
+
+.node-search-result {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid rgba(131, 225, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(14, 34, 45, 0.82);
+  color: #e8fbff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.node-search-result:hover,
+.node-search-result:focus-visible {
+  border-color: rgba(83, 225, 255, 0.72);
+  background: rgba(24, 69, 84, 0.92);
+}
+
+.node-search-result-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-search-result-meta {
+  flex: none;
+  color: #8bb7c5;
+  font-size: 10px;
 }
 
 .config-range {

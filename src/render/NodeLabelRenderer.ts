@@ -4,6 +4,9 @@ const DEFAULT_LABEL_FONT_SIZE = 10;
 const LABEL_GAP = 6;
 const COLLISION_PADDING = 3;
 const AUTO_OPTIMIZE_NODE_COUNT = 200;
+const GROUP_BOUNDARY_PADDING = 18;
+const GROUP_BOUNDARY_RECOMPUTE_LIMIT = 10_000;
+const GROUP_LABEL_FONT_SIZE = 11;
 
 import type { GraphData } from "../graph/GraphData.js";
 import type { Camera2D } from "./Camera2D.js";
@@ -13,6 +16,8 @@ import { getHighlightNodeRadius } from "./HighlightOverlayRenderer.js";
 interface LabelRenderOptions {
   /** 标签总开关。 */
   enabled?: boolean;
+  /** 是否显示分组包围圈与组名。 */
+  showGroupBounds?: boolean;
   /** 0～1 标签质量预算。 */
   performanceScale?: number;
   /** 节点邻域标记。 */
@@ -25,6 +30,8 @@ interface LabelRenderOptions {
   minimumSize?: number;
   /** 当前是否处于拖拽或缩放。 */
   interactionActive?: boolean;
+  /** 图片选中邻域的平滑缩放倍率。 */
+  highlightRadiusScale?: number;
   /** 标签字号。 */
   fontSize?: number;
 }
@@ -53,6 +60,24 @@ interface LabelRect {
   bottom: number;
 }
 
+/** 分组在当前相机中的世界坐标边界。 */
+interface GroupWorldBounds {
+  /** 分组索引。 */
+  groupIndex: number;
+  /** 分组显示名称。 */
+  label: string;
+  /** 世界坐标最小 X。 */
+  minX: number;
+  /** 世界坐标最小 Y。 */
+  minY: number;
+  /** 世界坐标最大 X。 */
+  maxX: number;
+  /** 世界坐标最大 Y。 */
+  maxY: number;
+  /** 分组内节点数量。 */
+  nodeCount: number;
+}
+
 /**
  * 使用单个 Canvas 2D 图层绘制节点标签。
  *
@@ -79,6 +104,8 @@ export class NodeLabelRenderer {
   private measuredLabels: MeasuredLabel[];
   /** 本帧已占用矩形，用于碰撞过滤。 */
   private placedRects: LabelRect[];
+  /** 分组边界的世界坐标缓存。 */
+  private groupWorldBounds: GroupWorldBounds[];
   /** Canvas CSS 宽度。 */
   private cssWidth: number;
   /** Canvas CSS 高度。 */
@@ -141,6 +168,7 @@ export class NodeLabelRenderer {
     this.drawnMask = null;
     this.measuredLabels = [];
     this.placedRects = [];
+    this.groupWorldBounds = [];
     this.cssWidth = 1;
     this.cssHeight = 1;
     this.pixelRatio = 1;
@@ -163,10 +191,14 @@ export class NodeLabelRenderer {
   upload(data: GraphData): void {
     this.data = data;
     this.labels = data.nodeLabels;
+    this.groupWorldBounds = this.#createGroupWorldBounds(data);
     this.automaticLabels = this.labels === null;
-    this.drawnMask = this.labels || this.automaticLabels
-      ? new Uint8Array(data.nodeCount)
-      : null;
+    this.drawnMask =
+      this.labels ||
+      this.automaticLabels ||
+      this.groupWorldBounds.length > 0
+        ? new Uint8Array(data.nodeCount)
+        : null;
     this.measuredLabels = [];
     this.autoOptimize =
       this.labels !== null && data.nodeCount > AUTO_OPTIMIZE_NODE_COUNT;
@@ -175,8 +207,9 @@ export class NodeLabelRenderer {
         ? this.#createLabelOrder(data.nodeWeights)
         : this.#createNaturalOrder(data.nodeCount)
       : null;
-    this.canvas.hidden = !this.labels;
-    if (!this.labels) {
+    this.canvas.hidden =
+      !this.labels && this.groupWorldBounds.length === 0;
+    if (!this.labels && this.groupWorldBounds.length === 0) {
       this.context.clearRect(0, 0, this.cssWidth, this.cssHeight);
     }
   }
@@ -230,16 +263,23 @@ export class NodeLabelRenderer {
     options: LabelRenderOptions = {},
   ): void {
     const startedAt = performance.now();
-    const { enabled = true, performanceScale = 1 } = options;
+    const {
+      enabled = true,
+      showGroupBounds = true,
+      performanceScale = 1,
+    } = options;
     const {
       highlightMask = null,
       forceLabelIds = [],
       nodeScale = 1,
       minimumSize = 5,
       interactionActive = false,
+      highlightRadiusScale = 1,
       fontSize = DEFAULT_LABEL_FONT_SIZE,
     } = options;
     const hasForcedLabels = forceLabelIds.length > 0;
+    const hasGroupBounds =
+      showGroupBounds && this.groupWorldBounds.length > 0;
     if (
       (!enabled && !hasForcedLabels) ||
       (performanceScale <= 0.04 && !hasForcedLabels)
@@ -253,12 +293,12 @@ export class NodeLabelRenderer {
       return;
     }
 
-    if (!this.labels && !this.automaticLabels) {
+    if (!this.labels && !this.automaticLabels && !hasGroupBounds) {
       this.lastLabelMs = 0;
       this.lastLabelCount = 0;
       return;
     }
-    if (!this.labels && !hasForcedLabels) {
+    if (!this.labels && !hasForcedLabels && !hasGroupBounds) {
       if (!this.canvas.hidden) {
         this.context.clearRect(0, 0, this.cssWidth, this.cssHeight);
         this.canvas.hidden = true;
@@ -304,6 +344,7 @@ export class NodeLabelRenderer {
           selectedId,
           nodeScale,
           minimumSize,
+          highlightRadiusScale,
         ),
       };
     }
@@ -341,7 +382,7 @@ export class NodeLabelRenderer {
             : Math.min(labelCount, maxLabels * 36)
           : labelCount;
 
-    this.drawnMask.fill(0);
+    this.drawnMask?.fill(0);
     this.placedRects.length = 0;
     const nextFontSize = Math.max(
       7,
@@ -356,6 +397,22 @@ export class NodeLabelRenderer {
     context.font = this.labelFont;
     context.textBaseline = "middle";
     context.lineJoin = "round";
+    if (this.data) {
+      if (
+        this.data.nodeCount <= GROUP_BOUNDARY_RECOMPUTE_LIMIT
+      ) {
+        this.groupWorldBounds = this.#createGroupWorldBounds(this.data);
+      }
+      if (showGroupBounds) {
+        this.#drawGroupBounds(
+          camera,
+          highlightMask,
+          nodeScale,
+          minimumSize,
+          highlightRadiusScale,
+        );
+      }
+    }
 
     for (const nodeIndex of forceLabelIds) {
       if (
@@ -371,6 +428,7 @@ export class NodeLabelRenderer {
           camera,
           nodeScale,
           minimumSize,
+          highlightRadiusScale,
           0.96,
           1,
           false,
@@ -405,6 +463,7 @@ export class NodeLabelRenderer {
           camera,
           nodeScale,
           minimumSize,
+          highlightRadiusScale,
           highlightActive && !isRelated ? 0.16 : 0.9,
           highlightActive && !isRelated ? 0.7 : 1,
           false,
@@ -430,6 +489,7 @@ export class NodeLabelRenderer {
           camera,
           nodeScale,
           minimumSize,
+          highlightRadiusScale,
           1,
           1.08,
           true,
@@ -442,6 +502,208 @@ export class NodeLabelRenderer {
     }
 
     this.lastLabelMs = performance.now() - startedAt;
+  }
+
+  /**
+   * 根据节点世界坐标建立每个分组的包围范围。
+   *
+   * @param data - 当前图数据。
+   * @returns 仅包含实际拥有节点的分组。
+   */
+  #createGroupWorldBounds(data: GraphData): GroupWorldBounds[] {
+    const groups = Array.from(
+      { length: data.clusterCount },
+      (_, groupIndex): GroupWorldBounds => ({
+        groupIndex,
+        label: data.groupLabels?.[groupIndex] ?? `分组 ${groupIndex + 1}`,
+        minX: Infinity,
+        minY: Infinity,
+        maxX: -Infinity,
+        maxY: -Infinity,
+        nodeCount: 0,
+      }),
+    );
+
+    for (let nodeIndex = 0; nodeIndex < data.nodeCount; nodeIndex += 1) {
+      const group = data.nodeGroups[nodeIndex];
+      const bounds = groups[group];
+      if (!bounds) continue;
+      const x = data.nodePositions[nodeIndex * 2];
+      const y = data.nodePositions[nodeIndex * 2 + 1];
+      bounds.minX = Math.min(bounds.minX, x);
+      bounds.minY = Math.min(bounds.minY, y);
+      bounds.maxX = Math.max(bounds.maxX, x);
+      bounds.maxY = Math.max(bounds.maxY, y);
+      bounds.nodeCount += 1;
+    }
+
+    return groups.filter((group) => group.nodeCount > 0);
+  }
+
+  /**
+   * 绘制分组包围气泡和组名。
+   *
+   * @param camera - 当前相机。
+   * @param highlightMask - 当前节点邻域标记。
+   * @param nodeScale - 节点尺寸倍数。
+   * @param minimumSize - 节点最小屏幕尺寸。
+   * @param highlightRadiusScale - 选中邻域放大倍率。
+   * @returns 无返回值。
+   */
+  #drawGroupBounds(
+    camera: Camera2D,
+    highlightMask: Uint8Array | null,
+    nodeScale: number,
+    minimumSize: number,
+    highlightRadiusScale: number,
+  ): void {
+    const data = this.data;
+    if (!data || this.groupWorldBounds.length === 0) return;
+    const context = this.context;
+    const relatedGroups = new Set<number>();
+    if (highlightMask) {
+      for (let nodeIndex = 0; nodeIndex < data.nodeCount; nodeIndex += 1) {
+        if (highlightMask[nodeIndex] === 1) {
+          relatedGroups.add(data.nodeGroups[nodeIndex]);
+        }
+      }
+    }
+    const groupNodeExtents = new Float32Array(data.clusterCount);
+    if (data.nodeCount <= GROUP_BOUNDARY_RECOMPUTE_LIMIT) {
+      for (let nodeIndex = 0; nodeIndex < data.nodeCount; nodeIndex += 1) {
+        const groupIndex = data.nodeGroups[nodeIndex];
+        groupNodeExtents[groupIndex] = Math.max(
+          groupNodeExtents[groupIndex],
+          this.#getNodeExtent(
+            nodeIndex,
+            nodeScale,
+            minimumSize,
+            highlightRadiusScale,
+          ),
+        );
+      }
+    } else {
+      groupNodeExtents.fill(
+        Math.max(minimumSize, 8) + GROUP_BOUNDARY_PADDING,
+      );
+    }
+
+    const orderedGroups = this.groupWorldBounds
+      .slice()
+      .sort((left, right) => right.nodeCount - left.nodeCount);
+    const boundaryPadding = Math.min(
+      GROUP_BOUNDARY_PADDING,
+      Math.max(4, camera.scale * 90),
+    );
+
+    context.save();
+    context.font = `600 ${GROUP_LABEL_FONT_SIZE}px ${LABEL_FONT_FAMILY}`;
+    context.textBaseline = "middle";
+    context.lineJoin = "round";
+
+    for (const group of orderedGroups) {
+      const left =
+        (group.minX - camera.centerX) * camera.scale +
+        camera.viewportWidth * 0.5;
+      const right =
+        (group.maxX - camera.centerX) * camera.scale +
+        camera.viewportWidth * 0.5;
+      const top =
+        (group.minY - camera.centerY) * camera.scale +
+        camera.viewportHeight * 0.5;
+      const bottom =
+        (group.maxY - camera.centerY) * camera.scale +
+        camera.viewportHeight * 0.5;
+      const centerX = (left + right) * 0.5;
+      const centerY = (top + bottom) * 0.5;
+      const nodeExtent = groupNodeExtents[group.groupIndex] ?? 0;
+      const radiusX = Math.max(
+        2,
+        (right - left) * 0.5 + nodeExtent + boundaryPadding,
+      );
+      const radiusY = Math.max(
+        2,
+        (bottom - top) * 0.5 + nodeExtent + boundaryPadding,
+      );
+
+      if (
+        centerX + radiusX < 0 ||
+        centerX - radiusX > this.cssWidth ||
+        centerY + radiusY < 0 ||
+        centerY - radiusY > this.cssHeight
+      ) {
+        continue;
+      }
+
+      const highlighted =
+        relatedGroups.size === 0 || relatedGroups.has(group.groupIndex);
+      const hue = (group.groupIndex * 137.508) % 360;
+      context.globalAlpha = highlighted ? 0.82 : 0.16;
+      context.fillStyle = `hsla(${hue}, 78%, 55%, 0.055)`;
+      context.strokeStyle = `hsla(${hue}, 82%, 68%, 0.62)`;
+      context.lineWidth = highlighted ? 1.5 : 1;
+      context.beginPath();
+      context.ellipse(
+        centerX,
+        centerY,
+        radiusX,
+        radiusY,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+      context.stroke();
+
+      let label = group.label;
+      const maxWidth = Math.min(220, Math.max(90, radiusX * 1.55));
+      let labelWidth = context.measureText(label).width;
+      while (label.length > 2 && labelWidth > maxWidth) {
+        label = `${label.slice(0, -2)}…`;
+        labelWidth = context.measureText(label).width;
+      }
+      const labelHeight = 18;
+      const labelLeft = Math.max(
+        6,
+        Math.min(this.cssWidth - labelWidth - 14, centerX - labelWidth * 0.5 - 5),
+      );
+      const preferredTop = centerY - radiusY - labelHeight - 3;
+      const labelTop = Math.max(
+        6,
+        Math.min(
+          this.cssHeight - labelHeight - 6,
+          preferredTop < 6 ? centerY - radiusY + 5 : preferredTop,
+        ),
+      );
+      const rect: LabelRect = {
+        left: labelLeft,
+        top: labelTop,
+        right: labelLeft + labelWidth + 10,
+        bottom: labelTop + labelHeight,
+      };
+      this.placedRects.push(rect);
+      context.globalAlpha = highlighted ? 1 : 0.28;
+      context.fillStyle = `hsla(${hue}, 52%, 15%, 0.94)`;
+      context.strokeStyle = `hsla(${hue}, 82%, 72%, 0.78)`;
+      context.beginPath();
+      context.roundRect(
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        labelHeight,
+        9,
+      );
+      context.fill();
+      context.stroke();
+      context.fillStyle = "rgba(232, 248, 255, 0.96)";
+      context.fillText(
+        label,
+        rect.left + 5,
+        labelTop + labelHeight * 0.53,
+      );
+    }
+
+    context.restore();
   }
 
   /**
@@ -464,6 +726,7 @@ export class NodeLabelRenderer {
    * @param camera - 当前相机。
    * @param nodeScale - 节点尺寸倍数。
    * @param minimumSize - 节点最小尺寸。
+   * @param highlightRadiusScale - 图片邻域覆盖层缩放倍率。
    * @param opacity - 标签透明度。
    * @param textScale - 文本尺寸档位。
    * @param useFullLabel - 是否强制完整标签。
@@ -475,6 +738,7 @@ export class NodeLabelRenderer {
     camera: Camera2D,
     nodeScale: number,
     minimumSize: number,
+    highlightRadiusScale: number,
     opacity: number,
     textScale: number,
     useFullLabel: boolean = false,
@@ -503,6 +767,7 @@ export class NodeLabelRenderer {
       nodeIndex,
       nodeScale,
       minimumSize,
+      highlightRadiusScale,
     );
     const measured = this.#measureLabel(
       nodeIndex,
@@ -570,12 +835,14 @@ export class NodeLabelRenderer {
    * @param nodeIndex - 节点索引。
    * @param nodeScale - 节点尺寸倍数。
    * @param minimumSize - 普通节点最小屏幕尺寸。
+   * @param highlightRadiusScale - 图片邻域覆盖层缩放倍率。
    * @returns 节点当前绘制半径。
    */
   #getNodeExtent(
     nodeIndex: number,
     nodeScale: number,
     minimumSize: number,
+    highlightRadiusScale: number,
   ): number {
     const data = this.data;
     const weight = data.nodeWeights[nodeIndex] ?? 0;
@@ -591,7 +858,7 @@ export class NodeLabelRenderer {
 
     const isFocus = nodeIndex === this.activeSelectedId;
     extent = Math.max(
-      getHighlightNodeRadius(weight, isFocus),
+      getHighlightNodeRadius(weight, isFocus, highlightRadiusScale),
       extent * (isFocus ? 1.9 : 1.45),
       isFocus ? 12 : 9,
     );

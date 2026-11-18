@@ -58,6 +58,7 @@ const graph = new GraphView("#graph-canvas", {
     nodeShape: "image",
     edgeStyle: "straight",
     showLabels: true,
+    showGroupBounds: true,
     labelFontSize: 10,
     weightStrength: 1,
   },
@@ -89,6 +90,45 @@ graph.setData({
 节点支持可选的 `x/y`、`size`、`weight`、`color` 和 `iconId`；边支持
 可选的 `label`、`width` 和 `color`。缺少位置时按 `group` 或 `branch`
 生成确定性的分组布局。
+
+还可直接传入通用知识图谱：
+
+```ts
+graph.setData({
+  schemaVersion: "1.0",
+  title: "示例知识图谱",
+  entities: [
+    { id: "brand:byd", type: "brand", name: "比亚迪" },
+    { id: "series:qin", type: "series", name: "秦车系" },
+  ],
+  relations: [
+    {
+      id: "relation:byd-qin",
+      type: "owns",
+      source: "brand:byd",
+      target: "series:qin",
+      label: "品牌拥有车系",
+      directed: true,
+    },
+  ],
+});
+```
+
+图片节点被选中时默认保留图标原始颜色。显式传入节点的 `color` 后会使用该自定义颜色；SoA 数据可通过 `nodeColorOverrides` 标记需要覆盖颜色的节点。
+
+每个节点可使用独立图标：
+
+```ts
+graph.setData({
+  nodes: [
+    { id: "a", name: "A", icon: "data:image/svg+xml;base64,..." },
+    { id: "b", name: "B", icon: "https://example.com/b.svg" },
+  ],
+  edges: [{ source: "a", target: "b" }],
+});
+```
+
+图标会装入一张共享 16×16 图集，最多 256 个不同图标；重复 URL 自动复用。跨域图片服务器必须允许 CORS，否则会显示占位图标。
 
 `payload` 使用 `docs/high-performance-graph.md` 中定义的 SoA TypedArray 数据契约。普通数值数组会自动转换为对应 TypedArray。
 
@@ -150,11 +190,15 @@ graph.setStyle({
   nodeShape: "circle",
   edgeStyle: "curve",
   showLabels: false,
+  showGroupBounds: false,
   labelFontSize: 12,
   edgeWidthScale: 1.2,
   showEdges: true,
+  showEdgeArrows: true,
 });
 ```
+
+`showGroupBounds` 默认开启，用于控制分组包围圈和组名；设为 `false` 时仍保留节点标签。`showEdgeArrows` 默认开启，在每条边的起点和终点节点轮廓处各绘制一个箭头；箭头继承该边的颜色、透明度和选中高亮。
 
 ### 视图与渲染
 
@@ -203,7 +247,9 @@ graph.dispose();
 - 超过 200 后自动启用碰撞过滤、高权重优先和标签预算。
 - FPS 不足时先减少普通标签，继续不足时暂时隐藏普通标签。
 - 选中节点和全部直接邻居的标签绕过高权重抽样、碰撞过滤和 FPS 预算。
-- `showLabels` 是标签总开关；关闭后任何性能状态都不会绘制标签。
+- 每个实际拥有节点的分组会显示淡色包围气泡和分组标签；选中节点时只突出相关分组。
+- `showLabels` 是节点标签和分组标签的总开关；关闭后任何性能状态都不会绘制标签。
+- `showGroupBounds` 单独控制分组包围圈与组名，关闭后节点标签和关系边不受影响。
 
 ## 窗口尺寸
 
@@ -211,6 +257,9 @@ graph.dispose();
 
 ## 数据示例
 
-- 默认合成图：[main.ts](../src/main.ts)
-- 自定义业务图：[custom-graph.ts](../src/examples/custom-graph.ts)
-- NPM 真实依赖图：[npm-dependencies.ts](../src/examples/npm-dependencies.ts)
+- 随机压测合成图：[main.ts](../src/main.ts)
+- 比亚迪品牌 / 技术 → 车系关系图：[byd-series-graph.ts](../src/examples/byd-series-graph.ts)
+- 南昌起义人物谱：[nanchang-uprising-graph.ts](../src/examples/nanchang-uprising-graph.ts)
+- 真实 npm 依赖子图：[package-dependency-graph.ts](../src/examples/package-dependency-graph.ts)
+- 对象图与 SoA 示例：[relationship-payload.ts](../src/examples/relationship-payload.ts)
+- npm 依赖图转换：[NpmDependencyGraph.ts](../src/graph/NpmDependencyGraph.ts)

@@ -55,12 +55,16 @@ export class GraphStyle {
   weightStrength: number;
   /** 标签总开关。 */
   showLabels: boolean;
+  /** 分组包围圈与组名总开关。 */
+  showGroupBounds: boolean;
   /** 标签字号。 */
   labelFontSize: number;
   /** 边线宽度倍数。 */
   edgeWidthScale: number;
   /** 边线显示开关。 */
   showEdges: boolean;
+  /** 边方向箭头显示开关。 */
+  showEdgeArrows: boolean;
 
   /**
    * 创建样式对象。
@@ -78,9 +82,11 @@ export class GraphStyle {
     this.minimumNodeSize = 3;
     this.weightStrength = 1;
     this.showLabels = true;
+    this.showGroupBounds = true;
     this.labelFontSize = 10;
     this.edgeWidthScale = 1;
     this.showEdges = true;
+    this.showEdgeArrows = true;
     this.set(initial);
   }
 
@@ -133,6 +139,9 @@ export class GraphStyle {
     if (typeof patch.showLabels === "boolean") {
       this.showLabels = patch.showLabels;
     }
+    if (typeof patch.showGroupBounds === "boolean") {
+      this.showGroupBounds = patch.showGroupBounds;
+    }
     if (Number.isFinite(patch.labelFontSize)) {
       this.labelFontSize = this.#clamp(
         patch.labelFontSize as number,
@@ -149,6 +158,9 @@ export class GraphStyle {
     }
     if (typeof patch.showEdges === "boolean") {
       this.showEdges = patch.showEdges;
+    }
+    if (typeof patch.showEdgeArrows === "boolean") {
+      this.showEdgeArrows = patch.showEdgeArrows;
     }
     return this;
   }
@@ -170,9 +182,11 @@ export class GraphStyle {
       minimumNodeSize: this.minimumNodeSize,
       weightStrength: this.weightStrength,
       showLabels: this.showLabels,
+      showGroupBounds: this.showGroupBounds,
       labelFontSize: this.labelFontSize,
       edgeWidthScale: this.edgeWidthScale,
       showEdges: this.showEdges,
+      showEdgeArrows: this.showEdgeArrows,
     };
   }
 

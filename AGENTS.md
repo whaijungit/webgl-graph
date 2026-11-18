@@ -6,10 +6,15 @@
 
 - 项目是 TypeScript + Vite 的 WebGL2 高性能关系网络原型，入口示例为 `index.html` 和 `src/main.ts`。
 - 公共库入口为 `src/lib/index.ts`，类型入口为 `src/lib/index.d.ts`。
-- `GraphView.setData()` 同时接受运行时 `GraphData`、SoA `GraphPayload` 和业务对象图 `ObjectGraphPayload`。
-- 默认演示数据为 **100 个节点 / 3,000 条边 / 10 个社区**。
+- `GraphView.setData()` 同时接受运行时 `GraphData`、SoA `GraphPayload`、业务对象图 `ObjectGraphPayload` 和通用知识图谱 `KnowledgeGraphPayload`。
+- 默认演示数据为比亚迪品牌 / 技术 → 车系 → 车型关系图；南昌起义示例通过 `?preset=nanchang` 打开，npm 依赖示例通过 `?preset=dependencies` 打开。
+- 随机 `100 / 3,000` 图仍可通过 `?preset=default` 进入。
 - 默认节点外观为图片图标；节点数达到 `100,000` 后切换为 Point Sprite 大图路径。
 - 数据规模区域支持 JSON 上传和示例数据下载；上传数据通过 `GraphView.setData()` 装载。
+- 配置面板支持按标签、类型和节点编号搜索，并可选中定位节点。
+- 有向边默认只在 `target` 节点轮廓处绘制一个方向箭头，并可在显示配置中关闭。
+- 页面左下角使用 `stats.js` 显示 FPS，面板由 `GraphView` 的实际帧完成事件驱动。
+- 选中节点保留原始颜色；图片节点默认保留原图标色，显式自定义颜色通过覆盖标记应用。
 - 当前仓库分支为 `dev`，远程名为 `origin`。
 
 ## 运行与验证
@@ -33,7 +38,7 @@ npm run build:lib
 2. `npm run build` 通过；修改公共库或类型时额外运行 `npm run build:lib`。
 3. 页面没有 WebGL shader 编译错误。
 4. `renderer.gl.getError()` 返回 `0`。
-5. 默认数据量为 `100 / 3,000`。
+5. 默认演示应显示比亚迪关系图；`?preset=nanchang` 加载南昌起义人物关系并选中周恩来，`?preset=dependencies` 加载 npm 依赖示例，`?preset=default` 加载 `100 / 3,000` 随机数据。
 6. 点击节点后直接邻居节点、原始图标、标签和关联边均正常显示。
 7. 点击其他节点可切换邻域，点击空白区域可清除选择。
 8. 缩放到不同级别时，当前视口内节点不得因节点预算或实例序号被删除。
@@ -49,19 +54,20 @@ npm run build:lib
 | `SyntheticGraphGenerator` | `src/graph/SyntheticGraphGenerator.ts` | 合成节点和边 |
 | `GraphData` | `src/graph/GraphData.ts` | 校验并持有 SoA TypedArray |
 | `ObjectGraphAdapter` | `src/graph/ObjectGraphAdapter.ts` | 将 `{ groups, nodes, edges }` 转换为 SoA GraphPayload |
+| `KnowledgeGraphAdapter` | `src/graph/KnowledgeGraphAdapter.ts` | 将 `{ entities, relations }` 知识图谱转换为对象图 |
 | `NodeAdjacencyIndex` | `src/graph/NodeAdjacencyIndex.ts` | CSR 无向邻接索引和关联边索引 |
 | `GraphHighlightMask` | `src/render/GraphHighlightMask.ts` | 生成当前焦点和直接邻居的 0/1 标记 |
 | `GraphRenderer` | `src/render/GraphRenderer.ts` | 绘制编排、邻域切换、可见性和边 LOD |
 | `NodeRenderer` | `src/render/NodeRenderer.ts` | 节点实例化、SDF、图片图标和大图 Point Sprite |
 | `NodeLabelRenderer` | `src/render/NodeLabelRenderer.ts` | 共享 Canvas 标签、碰撞过滤和标签 LOD |
-| `EdgeRenderer` | `src/render/EdgeRenderer.ts` | 直线、曲线、虚线、抗锯齿和关联边强调 |
+| `EdgeRenderer` | `src/render/EdgeRenderer.ts` | 直线、曲线、虚线、方向箭头、抗锯齿和关联边强调 |
 | `NodeIconAtlas` | `src/render/NodeIconAtlas.ts` | 图片节点共享纹理图集 |
-| `HighlightOverlayRenderer` | `src/render/HighlightOverlayRenderer.ts` | 小图邻域节点使用原图标放大绘制 |
+| `HighlightOverlayRenderer` | `src/render/HighlightOverlayRenderer.ts` | 图片节点模式下，小图邻域节点使用原图标放大绘制 |
 | `GraphStyle` | `src/render/GraphStyle.ts` | 样式对象和配置校验 |
 | `Camera2D` | `src/render/Camera2D.ts` | 中心、缩放和视口 |
 | `SpatialNodeIndex` | `src/interaction/SpatialNodeIndex.ts` | 局部拾取和视口节点查询 |
 | `GraphInteractionController` | `src/interaction/GraphInteractionController.ts` | 拖拽、缩放、悬停和点击 |
-| 演示装配 | `src/main.ts` | 压测数据、配置面板、邻域面板和相机适配，不属于库核心 |
+| 演示装配 | `src/main.ts` | 压测数据、搜索、上传下载、配置面板、邻域面板和相机适配，不属于库核心 |
 
 ## 输入数据格式
 
@@ -73,8 +79,10 @@ npm run build:lib
 nodePositions    Float32Array  2 x N
 nodeSizes        Float32Array    N
 nodeColors       Uint8Array     4 x N
+nodeColorOverrides Uint8Array   N, optional, 1 表示显式自定义颜色
 nodeGroups       Uint16Array     N
 nodeIconIds      Uint8Array      N, optional, default index % 8
+nodeIconSources  (string|null)[] N, optional, URL/Data URL 自定义图标
 nodeWeights      Float32Array    N, optional, default undirected degree
 nodeLabels       string[]        N, optional
 nodeKinds        string[]        N, optional
@@ -120,19 +128,39 @@ graph.setData({
 - `nodes[].id` 必须唯一，边的 `source/target` 必须引用节点 ID。
 - `node.group` 优先，其次 `node.branch`，用于关联 `groups[].id`。
 - 分组缺失时会根据节点字段自动推导；未知边端点、重复节点 ID 和重复分组 ID 必须抛出明确错误。
-- 节点可选 `x/y/size/weight/color/iconId`；边可选 `label/width/color`。
+- 节点可选 `x/y/size/weight/color/iconId/icon`；边可选 `label/width/color`。
 - 缺少坐标时由 `ObjectGraphAdapter` 生成确定性的分组布局。
 - 边的 GPU 端点坐标由节点位置自动生成，业务侧不需要传 `edgePositions`。
+- 边默认在 `target` 端绘制连接箭头，箭头尖端贴合节点轮廓，并继续使用该边的颜色和透明度。
 - 业务对象只允许在装载阶段转换，禁止在每帧把对象图重新转换为 GPU 数据。
 - 修改对象图字段时必须同步更新 `src/lib/types.ts` 和 `src/lib/index.d.ts`。
+
+### 通用知识图谱 `KnowledgeGraphPayload`
+
+技能生成的 JSON 可直接上传，核心字段为：
+
+```text
+schemaVersion       "1.0"
+title               图谱标题
+entities[]          id/type/name/label/groupIds/sourceIds/attributes
+relations[]         id/type/source/target/label/directed/attributes
+groups[]            可选分组
+sources[]           可选来源
+```
+
+- `KnowledgeGraphAdapter` 将 `entity.type` 映射为节点类型，将 `relations[].type/label` 映射为边类型与标签。
+- 多个 `groupIds` 在单分组渲染中使用第一个有效分组。
+- `directed: false` 的关系会展开为正反两条边，确保每条绘制边仍只在 target 端显示箭头。
+- 坐标系、尺寸和图标继续由 `ObjectGraphAdapter` 生成，知识图谱本身不携带渲染字段。
+- 修改通用知识图谱字段时同步更新 `KnowledgeGraphAdapter` 和类型声明。
 
 ## 邻域交互与显示
 
 1. 鼠标悬停通过 `SpatialNodeIndex` 做局部拾取，只显示节点提示。
 2. 点击节点后，`NodeAdjacencyIndex` 读取直接邻居和关联边。
 3. `GraphHighlightMask` 生成焦点和直接邻居标记；重复边产生的邻居必须按节点去重。
-4. 小图通过 `HighlightOverlayRenderer` 使用每个邻居自己的 `nodeIconIds` 放大绘制。
-5. 大图 Point Sprite 使用每个节点自己的图标索引，只放大、恢复透明度和调整绘制顺序。
+4. 小图图片模式下通过 `HighlightOverlayRenderer` 使用每个邻居自己的 `nodeIconIds` 放大绘制；非图片形状不得经过图片覆盖层。
+5. 大图 Point Sprite 按 `uNodeShape` 保持当前形状；图片模式使用每个节点自己的图标索引，其他形状使用片元 SDF，只放大、恢复透明度和调整绘制顺序。
 6. `EdgeRenderer` 根据焦点 ID 判断关联边，只提高透明度和线宽，保留 `edgeColors`。
 
 不能破坏的交互规则：
@@ -143,9 +171,11 @@ graph.setData({
 - 按在节点上拖动只移动该节点及其关联边，不移动相机；按在空白处拖动仍平移画布。
 - 点击节点后必须显示全部直接邻居标签；演示侧邻域面板同时列出邻居名称。
 - 关联节点使用自己的原始图片图标和原始颜色。
+- 图片节点未显式自定义颜色时保持原图标色；存在 `color` 或 `nodeColorOverrides=1` 时使用自定义颜色。
 - 节点选中和关联显示不得修改 `nodeColors`；大数据和小数据行为一致。
 - 关联节点只放大显示，不额外绘制高亮圆环或外框。
 - 关联边可以加粗，但必须继续使用每条边自己的颜色。
+- 方向箭头必须与边使用相同颜色、透明度和高亮状态，不得引入逐边 DOM。
 - 非关联节点和非关联边降低透明度，而不是完全删除。
 - 若关联节点不在画布安全区域内，演示侧可自动适配相机，但不能改变节点数据。
 - “直线”模式必须使用片元级抗锯齿，不能因亚像素宽度出现断裂。
@@ -155,18 +185,20 @@ graph.setData({
 ### 小图路径（少于 100,000 节点）
 
 - 节点使用四顶点图标四边形实例化绘制。
-- 点击节点时额外绘制 `HighlightOverlayRenderer`，覆盖层只用于焦点邻域。
+- 点击节点时，图片模式额外绘制 `HighlightOverlayRenderer`；圆形、方形等非图片模式使用 `NodeRenderer` 的高亮 pass 最后绘制焦点邻域，保持当前选择的形状。
 - 普通状态通常为 2 个 draw call：边、节点。
 - 选中状态通常为 3 个 draw call：边、普通节点、邻域覆盖层。
 
 ### 大图 Point Sprite 路径（至少 100,000 节点）
 
-- 每个节点使用一个 Point Sprite 顶点，图标由 `nodeIconIds` 在片元着色器中绘制。
+- 每个节点使用一个 Point Sprite 顶点，并通过 `uNodeShape` 保持当前节点形状配置。
+- 图片模式由 `nodeIconIds` 绘制图标；圆形、方形、菱形、三角形、六边形、星形和混合形状使用 Point Sprite 片元 SDF，不得回退到图标。
 - 当前视口内的全部节点必须写入 Point Sprite 索引，不得按节点预算或实例序号抽样。
 - 当前焦点必须最后提交，直接邻居紧随其后，避免被普通节点覆盖。
 - 远景 Point Sprite 使用可调 `minimumNodeSize` 下限，默认约 `3～9px`；放大后继续按权重增长。
 - 关联节点至少约 `24px`，当前节点约 `40～60px`。
 - 大图不创建 `HighlightOverlayRenderer` 绘制，选中状态仍为 2 个 draw call。
+- 形状切换只增加一个 uniform，不得增加 draw call、节点提交数量或第二套 GPU 节点缓冲。
 
 ## 邻域标记属性
 
@@ -192,8 +224,9 @@ graph.setData({
 - 不要为节点创建 DOM `<img>`、SVG、独立 Canvas 或逐节点 DOM 文本。
 - 节点标签必须共用一个 Canvas 2D 图层；节点数超过 200 后启用碰撞过滤和预算。
 - 标签预算应随实时 FPS 降级和恢复；焦点与直接邻居标签始终绕过普通标签预算。
-- 低权重节点必须保留可调整的 `minimumNodeSize` 像素下限，不能因权重继续缩小到不可见。
+- 低权重节点必须保留可调整的 `minimumNodeSize` 基础下限，不能因权重继续缩小到不可见；放大视图时节点尺寸按平滑曲线增长，最大为 2.5 倍。
 - 不要把平滑边退化为 `gl.LINES`。
+- 方向箭头必须复用边实例缓冲和一次边 draw call；关闭箭头时跳过静态箭头顶点，不额外提交边实例。
 
 ## 样式配置
 
@@ -211,6 +244,7 @@ graphView.setStyle({
   minimumNodeSize: 3,
   edgeWidthScale: 1,
   showEdges: true,
+  showEdgeArrows: true,
   highlightColor: [0.42, 0.95, 1, 0.95],
 });
 ```
@@ -225,19 +259,22 @@ graphView.setStyle({
 
 ### 交错属性必须逐 location 绑定
 
-`HighlightOverlayRenderer` 的元数据布局为 `[radius, accent, iconIndex]`：
+`HighlightOverlayRenderer` 的元数据布局为
+`[radius, accent, iconIndex, useColor, r, g, b, a]`：
 
 ```text
-location 2 -> stride 12, offset 0
-location 3 -> stride 12, offset 4
-location 4 -> stride 12, offset 8
+location 2 -> stride 32, offset 0
+location 3 -> stride 32, offset 4
+location 4 -> stride 32, offset 8
+location 5 -> stride 32, offset 12
+location 6 -> stride 32, offset 16
 ```
 
-不能只在 location 2 设置 `size = 3`。
+不能只在 location 2 设置尺寸；颜色覆盖标记和 RGBA 必须逐 location 绑定。
 
 ### 原图标和原颜色不能被统一替换
 
-直接邻居必须使用各自的 `nodeIconIds` 和 `nodeColors`。选中、悬停或关联状态只改变尺寸、透明度、线宽和绘制顺序，不得把节点 RGB 改成统一高亮色。
+直接邻居必须使用各自的 `nodeIconIds` 和 `nodeColors`。选中状态不得把节点 RGB 混成统一高亮色；图片节点无自定义颜色时使用原始图标色，有显式自定义颜色时才应用覆盖色。
 
 ### 边颜色不能被统一高亮
 
@@ -259,6 +296,12 @@ CSR 中可能因重复边出现同一个邻居多次。面板、标签、覆盖�
 
 直线几何四边形包含覆盖空间，片元着色器根据到线中心的距离生成 coverage。不要只缩小 `< 1px` 的四边形。
 
+### 方向箭头必须复用边实例
+
+箭头是边静态几何末尾的 3 个三角形顶点，通过边起点到终点的屏幕方向计算目标端箭头位置。箭头与边在同一次 `drawArraysInstanced` 中提交，不得为箭头新增 draw call、逐边 DOM 或全量边扫描；关闭 `showEdgeArrows` 时只减少顶点提交数量。
+
+图片节点被选中时还会经过 `HighlightOverlayRenderer` 二次绘制。覆盖层基础半径必须乘以与普通节点相同的平滑缩放倍率，并限制为最高 `2.5×`；边端半径和标签定位必须使用同一倍率，否则放大时节点不增长，箭头也会脱离图标边界。
+
 ### 节点不能因 LOD 缺失
 
 当前视口内的节点必须全部显示。缩放查询使用 `SpatialNodeIndex.collectInBounds()`；选中节点和邻居强制加入可见集合。
@@ -270,6 +313,12 @@ CSR 中可能因重复边出现同一个邻居多次。面板、标签、覆盖�
 ### 调整窗口尺寸时必须避免空白帧
 
 WebGL canvas 修改 drawing buffer 会清空内容。`GraphView.resize()` 必须在尺寸变化后同步重绘，并保持透明合成背景与 `GraphStyle.backgroundColor` 一致。
+
+`ResizeObserver` 不处理 DPR 变化。`GraphView` 必须监听 `(resolution: N dppx)` 媒体查询；跨显示器或浏览器缩放到不同 DPR 后，立即重建 drawing buffer 并同步重绘。
+
+### 自定义节点图标必须共享图集
+
+逐节点 `icon` / `nodeIconSources` 必须异步装入共享 16×16 图标图集，索引从 8 开始分配。不得创建逐节点 `<img>`、独立纹理或 DOM。图集最多容纳 256 个图标（8 个内置 + 248 个自定义）；重复 URL 必须复用索引。
 
 ### 边 LOD 与节点可见性必须同步
 
@@ -285,6 +334,7 @@ WebGL canvas 修改 drawing buffer 会清空内容。`GraphView.resize()` 必须
 - 新交互必须同时考虑普通状态和选中状态。
 - 修改 Worker 数据格式时同步更新 `GraphData`、渲染器、类型声明和 `docs/high-performance-graph.md`。
 - 修改对象图输入格式时同步更新 `ObjectGraphAdapter`、`src/lib/types.ts`、`src/lib/index.d.ts` 和 `docs/library.md`。
+- 修改通用知识图谱输入格式时同步更新 `KnowledgeGraphAdapter` 和类型声明。
 - 节点选中时必须保留原始颜色、图标和单节点数据，大图与小图行为一致。
 
 ## 扩展方向

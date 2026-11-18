@@ -132,15 +132,12 @@ void main() {
   if (uHighlightActive == 1u) {
     if (!isRelated) {
       vColor.a *= uDimOpacity;
-    } else {
-      vColor.a = max(vColor.a, uHighlightColor.a * 0.95);
     }
   }
 
   vAccent = 0.0;
 
   if (isSelected) {
-    vColor = mix(vColor, uHighlightColor, 0.72);
     vColor.a = max(vColor.a, 0.96);
   } else if (isHovered) {
     vColor = mix(vColor, uHighlightColor, 0.5);
@@ -211,13 +208,13 @@ float sdStar(vec2 point, float radius, float innerRadius) {
 
 void main() {
   if (vShape == 7u) {
-    uint iconIndex = min(vIconIndex, 7u);
-    uint column = iconIndex % 4u;
-    uint row = iconIndex / 4u;
+    uint iconIndex = min(vIconIndex, 255u);
+    uint column = iconIndex % 16u;
+    uint row = iconIndex / 16u;
     vec2 localUv = (vCorner + 1.0) * 0.5;
     vec2 atlasUv =
       (vec2(float(column), float(row)) + localUv) /
-      vec2(4.0, 2.0);
+      vec2(16.0, 16.0);
     vec4 imageColor = texture(uIconAtlas, atlasUv);
     float radialDistance = length(vCorner);
     float accentRing =
@@ -279,12 +276,14 @@ layout(location = 4) in float aRelated;
 layout(location = 5) in uint aVisible;
 layout(location = 6) in uint aNodeId;
 layout(location = 7) in float aIconIndex;
+layout(location = 8) in float aColorOverride;
 
 uniform vec2 uViewport;
 uniform vec2 uCenter;
 uniform float uScale;
 uniform float uNodeScale;
 uniform float uMinimumSize;
+uniform uint uNodeShape;
 uniform uint uHoverId;
 uniform uint uSelectedId;
 uniform float uWeightStrength;
@@ -293,14 +292,18 @@ uniform float uDimOpacity;
 uniform vec4 uHighlightColor;
 
 out vec4 vColor;
+flat out uint vShape;
 flat out uint vIconIndex;
+flat out float vUseColorOverride;
 
 void main() {
   bool isSelected = aNodeId == uSelectedId;
   bool isHovered = aNodeId == uHoverId;
   bool isRelated =
     uHighlightActive == 1u && aRelated > 0.5;
+  vShape = uNodeShape == 6u ? aNodeId % 6u : uNodeShape;
   vIconIndex = uint(aIconIndex + 0.5);
+  vUseColorOverride = aColorOverride;
   if (
     aVisible == 0u &&
     !isRelated &&
@@ -356,10 +359,9 @@ void main() {
   if (uHighlightActive == 1u && !isRelated) {
     vColor.a *= uDimOpacity * 0.15;
   }
-  if (isRelated) {
-    vColor.a = 1.0;
-  }
-  if (isSelected || isHovered) {
+  if (isSelected) {
+    vColor.a = max(vColor.a, 0.96);
+  } else if (isHovered) {
     vColor = mix(vColor, uHighlightColor, 0.72);
     vColor.a = max(vColor.a, 0.96);
   }
@@ -370,8 +372,59 @@ const NODE_POINT_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
 in vec4 vColor;
+flat in uint vShape;
 flat in uint vIconIndex;
+flat in float vUseColorOverride;
+uniform sampler2D uIconAtlas;
 out vec4 outColor;
+
+float sdBox(vec2 point, vec2 halfSize) {
+  vec2 distance = abs(point) - halfSize;
+  return length(max(distance, 0.0)) +
+    min(max(distance.x, distance.y), 0.0);
+}
+
+float sdDiamond(vec2 point, float radius) {
+  return abs(point.x) + abs(point.y) - radius;
+}
+
+float sdTriangle(vec2 point) {
+  const float k = 1.732050808;
+  point.x = abs(point.x) - 0.88;
+  point.y = point.y + 0.508;
+  if (point.x + k * point.y > 0.0) {
+    point = vec2(
+      point.x - k * point.y,
+      -k * point.x - point.y
+    ) * 0.5;
+  }
+  point.x -= clamp(point.x, -1.76, 0.0);
+  return -length(point) * sign(point.y);
+}
+
+float sdHexagon(vec2 point, float radius) {
+  const vec3 k = vec3(-0.866025404, 0.5, 0.577350269);
+  point = abs(point);
+  point -= 2.0 * min(dot(k.xy, point), 0.0) * k.xy;
+  point -= vec2(
+    clamp(point.x, -k.z * radius, k.z * radius),
+    radius
+  );
+  return length(point) * sign(point.y);
+}
+
+float sdStar(vec2 point, float radius, float innerRadius) {
+  const vec2 k1 = vec2(0.809016994375, -0.587785252292);
+  const vec2 k2 = vec2(-k1.x, k1.y);
+  point.x = abs(point.x);
+  point -= 2.0 * max(dot(k1, point), 0.0) * k1;
+  point -= 2.0 * max(dot(k2, point), 0.0) * k2;
+  point.x = abs(point.x);
+  point.y -= radius;
+  vec2 ba = innerRadius * vec2(-k1.y, k1.x) - vec2(0.0, 1.0);
+  float h = clamp(dot(point, ba) / dot(ba, ba), 0.0, radius);
+  return length(point - ba * h);
+}
 
 float lineMask(float coordinate, float center, float width) {
   return 1.0 - smoothstep(
@@ -389,8 +442,60 @@ float circleMask(vec2 point, vec2 center, float radius) {
   );
 }
 
+vec3 iconBaseColor(uint iconIndex) {
+  if (iconIndex == 0u) return vec3(0.169, 0.498, 1.0);
+  if (iconIndex == 1u) return vec3(0.733, 0.361, 1.0);
+  if (iconIndex == 2u) return vec3(1.0, 0.373, 0.529);
+  if (iconIndex == 3u) return vec3(1.0, 0.690, 0.125);
+  if (iconIndex == 4u) return vec3(0.239, 0.851, 0.643);
+  if (iconIndex == 5u) return vec3(1.0, 0.463, 0.341);
+  if (iconIndex == 6u) return vec3(0.153, 0.780, 0.929);
+  return vec3(0.482, 0.827, 0.310);
+}
+
 void main() {
   vec2 point = gl_PointCoord * 2.0 - 1.0;
+  if (vShape == 7u && vIconIndex >= 8u) {
+    uint customIconIndex = min(vIconIndex, 255u);
+    uint column = customIconIndex % 16u;
+    uint row = customIconIndex / 16u;
+    vec2 atlasUv =
+      (vec2(float(column), float(row)) + gl_PointCoord) /
+      vec2(16.0, 16.0);
+    vec4 imageColor = texture(uIconAtlas, atlasUv);
+    if (imageColor.a <= 0.01) {
+      discard;
+    }
+    outColor = vec4(imageColor.rgb, imageColor.a * vColor.a);
+    return;
+  }
+
+  if (vShape != 7u) {
+    float signedDistance;
+    if (vShape == 1u) {
+      signedDistance = sdBox(point, vec2(0.72));
+    } else if (vShape == 2u) {
+      signedDistance = sdDiamond(point, 0.9);
+    } else if (vShape == 3u) {
+      signedDistance = sdTriangle(point);
+    } else if (vShape == 4u) {
+      signedDistance = sdHexagon(point, 0.86);
+    } else if (vShape == 5u) {
+      signedDistance = sdStar(point, 0.9, 0.43);
+    } else {
+      signedDistance = length(point) - 0.82;
+    }
+
+    float antialiasWidth = max(fwidth(signedDistance), 0.02);
+    float coverage =
+      1.0 - smoothstep(-antialiasWidth, antialiasWidth, signedDistance);
+    if (coverage <= 0.002) {
+      discard;
+    }
+    outColor = vec4(vColor.rgb, vColor.a * coverage);
+    return;
+  }
+
   float tile = 1.0 - smoothstep(0.82, 0.9, max(abs(point.x), abs(point.y)));
   if (tile <= 0.002) {
     discard;
@@ -451,7 +556,10 @@ void main() {
       ) * step(abs(point.x), 0.46)
     );
   }
-  vec3 iconColor = mix(vColor.rgb, vec3(1.0), glyph * 0.92);
+  vec3 tileColor = vUseColorOverride > 0.5
+    ? vColor.rgb
+    : iconBaseColor(min(vIconIndex, 7u));
+  vec3 iconColor = mix(tileColor, vec3(1.0), glyph * 0.92);
   outColor = vec4(iconColor, tile * vColor.a);
 }
 `;
@@ -490,6 +598,8 @@ export class NodeRenderer {
   private visibilityBuffer: WebGLBuffer | null;
   /** 节点位置实例缓冲。 */
   private positionBuffer: WebGLBuffer | null;
+  /** 按绘制顺序排列的节点自定义颜色标记。 */
+  private colorOverrideBuffer: WebGLBuffer | null;
   /** 节点实例绘制顺序。 */
   private instanceOrder: Uint32Array | null;
   /** 按绘制顺序排列的关联标记。 */
@@ -500,13 +610,21 @@ export class NodeRenderer {
   private instanceIndexByNode: Uint32Array | null;
   /** 当前节点数量。 */
   nodeCount: number;
+  /** 自定义图标图集更新后的通知回调。 */
+  private readonly onIconsLoaded: () => void;
+  /** 当前图标装载代次，防止旧图异步覆盖新图。 */
+  private iconLoadGeneration: number;
 
   /**
    * 创建节点渲染器。
    *
    * @param gl - WebGL2 上下文。
+   * @param onIconsLoaded - 自定义图标加载完成后的重绘回调。
    */
-  constructor(gl: WebGL2RenderingContext) {
+  constructor(
+    gl: WebGL2RenderingContext,
+    onIconsLoaded: () => void = () => {},
+  ) {
     this.gl = gl;
     this.program = new ShaderProgram(
       gl,
@@ -529,11 +647,14 @@ export class NodeRenderer {
     this.highlightBuffer = null;
     this.visibilityBuffer = null;
     this.positionBuffer = null;
+    this.colorOverrideBuffer = null;
     this.instanceOrder = null;
     this.orderedHighlightMask = null;
     this.orderedVisibilityMask = null;
     this.instanceIndexByNode = null;
     this.nodeCount = 0;
+    this.onIconsLoaded = onIconsLoaded;
+    this.iconLoadGeneration = 0;
     this.#createVertexArray();
   }
 
@@ -627,6 +748,18 @@ export class NodeRenderer {
       new Uint8Array(graphData.nodeCount),
     );
     const nodeIdBuffer = this.#createUint32InstanceBuffer(8, order);
+    const orderedColorOverrides = new Uint8Array(graphData.nodeCount);
+    for (
+      let instanceIndex = 0;
+      instanceIndex < order.length;
+      instanceIndex += 1
+    ) {
+      orderedColorOverrides[instanceIndex] =
+        graphData.nodeColorOverrides[order[instanceIndex]] ?? 0;
+    }
+    this.colorOverrideBuffer = this.#createBuffer(
+      orderedColorOverrides,
+    );
 
     this.instanceBuffers.push(
       this.positionBuffer,
@@ -637,10 +770,19 @@ export class NodeRenderer {
       iconBuffer,
       this.visibilityBuffer,
       nodeIdBuffer,
+      this.colorOverrideBuffer,
     );
     this.nodeCount = graphData.nodeCount;
     this.#configurePointVertexArray();
     gl.bindVertexArray(null);
+    const generation = ++this.iconLoadGeneration;
+    void this.iconAtlas
+      .loadCustomIcons(graphData.nodeIconSources, graphData.nodeIconIds)
+      .then((changed) => {
+        if (changed && generation === this.iconLoadGeneration) {
+          this.onIconsLoaded();
+        }
+      });
   }
 
   /**
@@ -837,6 +979,7 @@ export class NodeRenderer {
   ): void {
     const {
       nodeScale = 1,
+      nodeShape = 7,
       highlightMask = null,
       highlightColor = [0.42, 0.95, 1, 0.95],
       dimOpacity = 0.1,
@@ -855,11 +998,14 @@ export class NodeRenderer {
     gl.uniform1f(program.uniform("uScale"), camera.scale);
     gl.uniform1f(program.uniform("uNodeScale"), nodeScale);
     gl.uniform1f(program.uniform("uMinimumSize"), minimumSize);
+    gl.uniform1ui(program.uniform("uNodeShape"), nodeShape);
     gl.uniform1ui(program.uniform("uHoverId"), hoverId ?? 0xffffffff);
     gl.uniform1ui(program.uniform("uSelectedId"), selectedId ?? 0xffffffff);
     gl.uniform1f(program.uniform("uWeightStrength"), weightStrength);
     gl.uniform1f(program.uniform("uDimOpacity"), dimOpacity);
     gl.uniform4fv(program.uniform("uHighlightColor"), highlightColor);
+    gl.uniform1i(program.uniform("uIconAtlas"), 0);
+    this.iconAtlas.bind(0);
     gl.uniform1ui(
       program.uniform("uHighlightActive"),
       highlightMask ? 1 : 0,
@@ -932,6 +1078,14 @@ export class NodeRenderer {
       1,
       gl.UNSIGNED_BYTE,
       false,
+      1,
+    );
+    this.#configurePointAttribute(
+      8,
+      this.colorOverrideBuffer,
+      1,
+      gl.UNSIGNED_BYTE,
+      true,
       1,
     );
     this.pointIndexBuffer = gl.createBuffer();
@@ -1153,6 +1307,23 @@ export class NodeRenderer {
       0,
     );
     gl.vertexAttribDivisor(location, 1);
+    return buffer;
+  }
+
+  /**
+   * 创建并上传一个不绑定属性的 GPU 缓冲。
+   *
+   * @param data - 缓冲数据。
+   * @returns 创建的 GPU 缓冲。
+   */
+  #createBuffer(data: ArrayBufferView): WebGLBuffer {
+    const gl = this.gl;
+    const buffer = gl.createBuffer();
+    if (!buffer) {
+      throw new Error("无法创建节点属性缓冲");
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
     return buffer;
   }
 

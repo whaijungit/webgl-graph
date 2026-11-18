@@ -1,6 +1,6 @@
 ﻿import { EdgeRenderer } from "./EdgeRenderer.js";
 import { GraphHighlightMask } from "./GraphHighlightMask.js";
-import { GraphStyle } from "./GraphStyle.js";
+import { GraphStyle, NODE_SHAPE_IDS } from "./GraphStyle.js";
 import { HighlightOverlayRenderer } from "./HighlightOverlayRenderer.js";
 import { NodeRenderer } from "./NodeRenderer.js";
 import { NodeLabelRenderer } from "./NodeLabelRenderer.js";
@@ -28,7 +28,7 @@ export class GraphRenderer {
   readonly nodeRenderer: NodeRenderer;
   /** 共享 Canvas 标签层。 */
   readonly labelRenderer: NodeLabelRenderer;
-  /** 关联节点原图标覆盖层。 */
+  /** 图片模式下关联节点的原图标覆盖层。 */
   readonly highlightOverlay: HighlightOverlayRenderer;
   /** 当前图数据。 */
   graphData: GraphData | null;
@@ -50,6 +50,8 @@ export class GraphRenderer {
   style: RenderStyle;
   /** 焦点邻域标记。 */
   highlightMask: GraphHighlightMask | null;
+  /** 图片邻域覆盖层的当前缩放倍率。 */
+  private highlightRadiusScale: number;
   /** 节点可见掩码。 */
   visibilityMask: Uint8Array;
   /** 边可见掩码。 */
@@ -65,8 +67,12 @@ export class GraphRenderer {
    * 创建 WebGL2 上下文及各子渲染器。
    *
    * @param canvas - 用于创建 WebGL2 上下文的 Canvas。
+   * @param onIconsLoaded - 自定义图标加载完成后的重绘回调。
    */
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    onIconsLoaded: () => void = () => {},
+  ) {
     this.canvas = canvas;
     const gl = canvas.getContext("webgl2", {
       alpha: true,
@@ -82,7 +88,7 @@ export class GraphRenderer {
     }
     this.gl = gl;
     this.edgeRenderer = new EdgeRenderer(gl);
-    this.nodeRenderer = new NodeRenderer(gl);
+    this.nodeRenderer = new NodeRenderer(gl, onIconsLoaded);
     this.labelRenderer = new NodeLabelRenderer(canvas);
     this.highlightOverlay = new HighlightOverlayRenderer(
       gl,
@@ -98,6 +104,7 @@ export class GraphRenderer {
     this.graphStyle = new GraphStyle();
     this.style = this.graphStyle.toRenderOptions();
     this.highlightMask = null;
+    this.highlightRadiusScale = 1;
     this.visibilityMask = new Uint8Array(0);
     this.edgeVisibilityMask = new Uint8Array(0);
     this.visibilityKey = "";
@@ -232,6 +239,7 @@ export class GraphRenderer {
         this.highlightMask.focusId,
         this.highlightMask.previousIds,
         this.graphData,
+        this.highlightRadiusScale,
       );
     }
     this.visibilityKey = "";
@@ -283,6 +291,25 @@ export class GraphRenderer {
       const highlightActive = focusId !== null;
       const usesPointRendering =
         this.nodeRenderer.nodeCount >= 100_000;
+      const showImageHighlightOverlay =
+        highlightActive &&
+        !usesPointRendering &&
+        this.style.nodeShape === NODE_SHAPE_IDS.image;
+      const needsShapeHighlightPass =
+        highlightActive &&
+        !usesPointRendering &&
+        !showImageHighlightOverlay;
+      const zoomNodeScale = Math.min(
+        2.5,
+        Math.max(1, Math.pow(Math.max(camera.scale, 0.5) / 0.5, 0.4)),
+      );
+      this.highlightRadiusScale = zoomNodeScale;
+      const nodeScale =
+        this.#calculateNodeScale(camera) *
+        this.style.nodeScale *
+        zoomNodeScale;
+      const minimumNodeSize =
+        this.style.minimumNodeSize * zoomNodeScale;
       const edgeBudget = this.#calculateEdgeBudget(camera);
       const nodeBudget = this.#calculateNodeBudget(camera);
       const nodeStride = Math.max(
@@ -303,6 +330,7 @@ export class GraphRenderer {
             focusId,
             this.highlightMask.previousIds,
             this.graphData,
+            this.highlightRadiusScale,
           );
         }
       }
@@ -315,33 +343,46 @@ export class GraphRenderer {
             highlightActive,
             dimOpacity: this.style.edgeDimOpacity,
             widthScale: this.style.edgeWidthScale,
+            showArrows: this.style.showEdgeArrows,
+            nodeScale,
+            minimumSize: minimumNodeSize,
+            weightStrength: this.style.weightStrength,
+            nodeShape: this.style.nodeShape,
+            pointRendering: usesPointRendering,
+            highlightRadiusScale: zoomNodeScale,
           },
         );
       }
-      const nodeScale =
-        this.#calculateNodeScale(camera) * this.style.nodeScale;
-      const minimumNodeSize = this.style.minimumNodeSize;
+      const nodeRenderOptions = {
+        nodeScale,
+        minimumSize: minimumNodeSize,
+        nodeStride,
+        nodeShape: this.style.nodeShape,
+        highlightMask: highlightActive ? this.highlightMask : null,
+        highlightColor: this.style.highlightColor,
+        dimOpacity: this.style.dimOpacity,
+        weightStrength: this.style.weightStrength,
+        highlightPass: 0,
+      };
       this.nodeRenderer.draw(
         camera,
         hoverId,
         selectedId,
-        {
-          nodeScale,
-          minimumSize: minimumNodeSize,
-          nodeStride,
-          nodeShape: this.style.nodeShape,
-          highlightMask: highlightActive ? this.highlightMask : null,
-          highlightColor: this.style.highlightColor,
-          dimOpacity: this.style.dimOpacity,
-          weightStrength: this.style.weightStrength,
-        },
+        nodeRenderOptions,
       );
+      if (needsShapeHighlightPass) {
+        this.nodeRenderer.draw(camera, hoverId, selectedId, {
+          ...nodeRenderOptions,
+          highlightPass: 1,
+        });
+      }
 
-      if (highlightActive && !usesPointRendering) {
+      if (showImageHighlightOverlay) {
         this.highlightOverlay.draw(camera);
       }
       this.labelRenderer.draw(camera, hoverId, selectedId, {
         enabled: this.style.showLabels,
+        showGroupBounds: this.style.showGroupBounds,
         performanceScale: this.labelQualityScale,
         fontSize: this.style.labelFontSize,
         highlightMask: highlightActive
@@ -353,6 +394,7 @@ export class GraphRenderer {
         nodeScale,
         minimumSize: minimumNodeSize,
         interactionActive: this.interactionActive,
+        highlightRadiusScale: this.highlightRadiusScale,
       });
 
       this.lastDrawCalls =

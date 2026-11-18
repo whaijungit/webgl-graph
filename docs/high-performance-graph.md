@@ -1,6 +1,6 @@
 # 高性能关系图实现说明
 
-这个原型把关系图当作 GPU 数据渲染，而不是几十万个 JavaScript 图元对象。默认数据量为 100 个节点、3,000 条边，也可以切换到 50 万节点、100 万条边进行压力测试。
+这个原型把关系图当作 GPU 数据渲染，而不是几十万个 JavaScript 图元对象。默认视图展示比亚迪品牌 / 技术 → 车系 → 车型关系；南昌起义人物关系可通过 `?preset=nanchang` 打开，npm 构建依赖子图可通过 `?preset=dependencies` 打开，随机 100 节点、3,000 条边数据可通过 `?preset=default` 打开，也可以切换到 50 万节点、100 万条边进行压力测试。
 
 ## 运行
 
@@ -43,6 +43,7 @@ npm run build
 nodePositions    Float32Array  2 × N
 nodeSizes        Float32Array    N
 nodeColors       Uint8Array     4 × N
+nodeColorOverrides Uint8Array   N，可选，1 表示显式自定义颜色
 nodeGroups       Uint16Array     N
 nodeWeights      Float32Array    N，可选
 nodeIconIds      Uint8Array      N，可选
@@ -73,11 +74,15 @@ edgeKinds        string[]        E，可选，关系类型文本
 3. 自动优化时，桌面最多保留 140 个标签，窄屏最多 72 个，拖拽或缩放期间最多 48 个。
 4. 选中和悬停节点始终保留标签。
 5. 大图只扫描有上限的高权重候选，不遍历全部节点。
-6. 没有 `nodeLabels` 的合成大图会隐藏标签画布并直接跳过绘制。
+6. 没有 `nodeLabels` 且没有分组时，合成大图会隐藏标签画布并直接跳过绘制；存在分组时仍绘制分组包围层和组名。
 
-小图标签会省略版本号并尝试节点四周的位置以减少遮挡，悬停/选中提示仍显示完整包名和版本。标签文本宽度会缓存，避免连续渲染时重复测量。标签不增加 WebGL draw call，但会在每次实际渲染时产生少量 Canvas 2D 提交成本。
+同一共享 Canvas 会为每个实际拥有节点的分组绘制淡色包围气泡和分组标签。分组自动布局按最大分组半径预留网格间距，气泡半径同时计入组内节点图标尺寸，并随相机缩放同步变化，避免节点越出所属气泡或进入其他分组。节点数不超过 10,000 时，分组边界随节点拖动实时重算；更大图在装载时预计算分组边界，避免每帧扫描全部节点。节点标签会避开已绘制的分组标签。标签和分组不增加 WebGL draw call，但会在每次实际渲染时产生少量 Canvas 2D 提交成本。
 
-调用 `graphView.setStyle({ showLabels: false })` 可以直接关闭标签图层。没有 `nodeLabels` 的数据不会创建标签文本。
+小图标签会省略版本号并尝试节点四周的位置以减少遮挡，悬停/选中提示仍显示完整包名和版本。标签文本宽度会缓存，避免连续渲染时重复测量。
+
+调用 `graphView.setStyle({ showLabels: false })` 可以直接关闭节点和分组标签图层。没有 `nodeLabels` 的数据不会创建节点标签文本。
+
+`graphView.setStyle({ showGroupBounds: false })` 可单独关闭分组包围圈和组名，同时保留节点标签与关系边。
 
 标签还会根据测得的 FPS 自动降级：低于目标帧率约 10% 时开始减少普通标签预算，降到目标帧率约 60% 时自动隐藏普通标签；性能恢复后按较慢速度恢复。手动开关始终优先，关闭后无论 FPS 如何都不绘制标签。
 
@@ -93,13 +98,13 @@ edgeKinds        string[]        E，可选，关系类型文本
 
 ## 第二步：上传 GPU 缓冲区
 
-小图由 [NodeRenderer.ts](../src/render/NodeRenderer.ts) 使用四顶点图标四边形实例化绘制。节点数达到 100,000 后切换为单顶点 Point Sprite，并把全部可见节点索引写入动态 `Uint32Array`。大图不再按节点序号或节点预算抽样，任何位于当前视口内的节点都会提交；性能控制转移到更小的远景 Point Sprite 片元和边预算。Point Sprite 读取 `nodeIconIds` 并绘制 8 种高对比度简化图标；选中节点和直接邻居继续保留各自的图标索引与原始 `nodeColors`，只放大、恢复完整透明度并最后绘制当前焦点。
+小图由 [NodeRenderer.ts](../src/render/NodeRenderer.ts) 使用四顶点节点四边形实例化绘制。节点数达到 100,000 后切换为单顶点 Point Sprite，并把全部可见节点索引写入动态 `Uint32Array`。大图不再按节点序号或节点预算抽样，任何位于当前视口内的节点都会提交；性能控制转移到更小的远景 Point Sprite 片元和边预算。Point Sprite 通过 `uNodeShape` 支持全部形状：图片模式读取 `nodeIconIds` 绘制 8 种高对比度简化图标，其他模式在同一个片元着色器中使用轻量 SDF。形状切换不增加 draw call 或节点提交数量。
 
 大图 Point Sprite 的远景屏幕尺寸以 `minimumNodeSize` 为下限，默认按权重映射到约 3～9px，避免百万节点在完整适配视图下产生过大的片元重叠；放大后继续按权重增长。选中节点放大到约 `40～60px`，直接邻居至少约 `24px`，因此大图邻域仍然清晰可见。
 
-选中邻域保持图标形状一致。直接邻居维持自己的正常图标、颜色和尺寸，只保证绘制在非关联节点上层并显示标签；非关联节点降低透明度。
+图片模式下，选中邻域通过独立图标覆盖层保持原图标形状。圆形、方形、菱形等非图片模式则使用独立高亮 pass 最后绘制焦点和直接邻居，节点继续使用当前 `nodeShape`，不会被覆盖成图标；非关联节点降低透明度。
 
-[EdgeRenderer.ts](../src/render/EdgeRenderer.ts) 把每条边展开成屏幕空间四边形。相邻顶点使用 `aStart` 和 `aEnd` 的同一份交错缓冲区，从而避开 WebGL 对 `lineWidth` 的平台限制。
+[EdgeRenderer.ts](../src/render/EdgeRenderer.ts) 把每条边展开成屏幕空间三角形。相邻顶点使用 `aStart` 和 `aEnd` 的同一份交错缓冲区，从而避开 WebGL 对 `lineWidth` 的平台限制。每条有向边只在 `target` 节点轮廓处绘制一个箭头；箭头是静态几何末尾的 3 个三角形顶点，与全部边实例共用一次 draw call。边端点会根据节点尺寸、权重、形状和选中放大状态裁剪到轮廓边界。图片选中邻域由 `HighlightOverlayRenderer` 绘制，覆盖层半径使用与普通节点相同的平滑缩放倍率并限制为最高 `2.5×`；边端半径和标签定位必须同步使用该倍率。关闭 `showEdgeArrows` 时只跳过这 3 个顶点，不减少或重建实例缓冲。
 
 普通节点只使用以下实例属性：
 
@@ -118,7 +123,7 @@ aWeight    float
 原始尺寸 × LOD 尺寸 × 权重倍率
 ```
 
-默认情况下，权重只影响节点尺寸和绘制顺序，不改变节点透明度。低权重节点会在 `minimumNodeSize` 屏幕尺寸下限之上缩小，高权重节点会放大并最后绘制。界面中的“节点最小尺寸”控制低权重节点的可调整像素下限，“权重差异”只调整下限以上的尺寸差异。
+默认情况下，权重只影响节点尺寸和绘制顺序，不改变节点透明度。低权重节点会在 `minimumNodeSize` 屏幕尺寸下限之上缩小，高权重节点会放大并最后绘制。界面中的“节点最小尺寸”控制适配视图下的基础像素下限；相机放大时全部节点和该下限按平滑曲线增长并最多放大 2.5 倍，避免节点间距变大后节点相对显得越来越小。“权重差异”只调整下限以上的尺寸差异。
 
 ## 第三步：相机只修改 uniform
 
@@ -188,6 +193,7 @@ graphView.setStyle({
   minimumNodeSize: 3,
   edgeWidthScale: 1.2,
   showEdges: true,
+  showEdgeArrows: true,
   highlightColor: "rgba(89, 255, 209, 0.95)",
 });
 ```
@@ -196,7 +202,7 @@ graphView.setStyle({
 
 颜色支持 `#RGB`、`#RGBA`、`#RRGGBB`、`#RRGGBBAA`、`0xRRGGBB`、`0xRRGGBBAA`、十进制整数、CSS `rgb()/rgba()` 以及 RGB/RGBA 数组。节点和边的颜色集合既可逐项传颜色，也可传扁平 RGBA 字节数组。
 
-图片图标由 [NodeIconAtlas.ts](../src/render/NodeIconAtlas.ts) 打包成一张纹理图集，`nodeIconIds` 决定每个节点使用哪张图片。真正任意业务图片也可以预先打进图集，而不是为每个节点创建 DOM `<img>` 或 SVG。任意边路径应在导入阶段采样成线段，再作为实例化曲线或折线数据提交。
+图片图标由 [NodeIconAtlas.ts](../src/render/NodeIconAtlas.ts) 打包成一张 16×16 纹理图集。内置 8 个图标之后的自定义 URL/Data URL 会异步装入剩余单元，`nodeIconIds` 决定每个节点使用哪张图片。图集最多支持 256 个不同图标，重复来源自动复用；不得为每个节点创建 DOM `<img>`、SVG 或独立纹理。跨域图片需要 CORS。任意边路径应在导入阶段采样成线段，再作为实例化曲线或折线数据提交。
 
 ## 接入业务数据
 

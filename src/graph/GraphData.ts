@@ -28,10 +28,14 @@ export class GraphData {
   readonly nodeSizes: Float32Array;
   /** 节点 RGBA 颜色字节。 */
   readonly nodeColors: Uint8Array;
+  /** 节点是否显式提供了自定义颜色。 */
+  readonly nodeColorOverrides: Uint8Array;
   /** 节点社区索引。 */
   readonly nodeGroups: Uint16Array;
   /** 节点图标图集索引。 */
   readonly nodeIconIds: Uint8Array;
+  /** 逐节点自定义图标来源；内置图标为 `null`。 */
+  readonly nodeIconSources: Array<string | null> | null;
   /** 节点标签。 */
   readonly nodeLabels: string[] | null;
   /** 节点类型文本。 */
@@ -77,10 +81,18 @@ export class GraphData {
       this.nodeCount,
       DEFAULT_NODE_COLOR,
     );
+    this.nodeColorOverrides = payload.nodeColorOverrides
+      ? toUint8Array(payload.nodeColorOverrides)
+      : new Uint8Array(this.nodeCount);
     this.nodeGroups = toUint16Array(payload.nodeGroups);
+    this.nodeIconSources = payload.nodeIconSources
+      ? Array.from(payload.nodeIconSources)
+      : null;
     this.nodeIconIds = payload.nodeIconIds
       ? toUint8Array(payload.nodeIconIds)
-      : createIconIds(this.nodeCount);
+      : this.nodeIconSources
+        ? createIconIdsFromSources(this.nodeCount, this.nodeIconSources)
+        : createIconIds(this.nodeCount);
     this.nodeLabels = payload.nodeLabels
       ? Array.from(payload.nodeLabels)
       : null;
@@ -181,8 +193,17 @@ export class GraphData {
       [this.nodePositions.length === this.nodeCount * 2, "节点坐标长度错误"],
       [this.nodeSizes.length === this.nodeCount, "节点尺寸长度错误"],
       [this.nodeColors.length === this.nodeCount * 4, "节点颜色长度错误"],
+      [
+        this.nodeColorOverrides.length === this.nodeCount,
+        "节点颜色覆盖标记长度错误",
+      ],
       [this.nodeGroups.length === this.nodeCount, "节点分组长度错误"],
       [this.nodeIconIds.length === this.nodeCount, "节点图标索引长度错误"],
+      [
+        !this.nodeIconSources ||
+          this.nodeIconSources.length === this.nodeCount,
+        "节点图标来源长度错误",
+      ],
       [!this.nodeLabels || this.nodeLabels.length === this.nodeCount, "节点标签长度错误"],
       [!this.nodeKinds || this.nodeKinds.length === this.nodeCount, "节点类型长度错误"],
       [!this.groupLabels || this.groupLabels.length >= this.clusterCount, "社区标签长度错误"],
@@ -296,6 +317,7 @@ export class GraphData {
       this.nodePositions,
       this.nodeSizes,
       this.nodeColors,
+      this.nodeColorOverrides,
       this.nodeGroups,
       this.nodeIconIds,
       this.nodeDegrees,
@@ -361,6 +383,40 @@ function createIconIds(nodeCount: number): Uint8Array {
   const ids = new Uint8Array(nodeCount);
   for (let nodeIndex = 0; nodeIndex < nodeCount; nodeIndex += 1) {
     ids[nodeIndex] = nodeIndex % 8;
+  }
+  return ids;
+}
+
+/**
+ * 按自定义图标来源生成共享图集索引。
+ *
+ * 相同 URL/Data URL 自动复用索引，自定义索引从内置图标之后开始。
+ *
+ * @param nodeCount - 节点数量。
+ * @param sources - 与节点索引对齐的图标来源。
+ * @returns 图集索引数组。
+ */
+function createIconIdsFromSources(
+  nodeCount: number,
+  sources: readonly (string | null)[],
+): Uint8Array {
+  const ids = new Uint8Array(nodeCount);
+  const indexBySource = new Map<string, number>();
+  for (let nodeIndex = 0; nodeIndex < nodeCount; nodeIndex += 1) {
+    const source = sources[nodeIndex]?.trim();
+    if (!source) {
+      ids[nodeIndex] = nodeIndex % 8;
+      continue;
+    }
+    let iconId = indexBySource.get(source);
+    if (iconId === undefined) {
+      iconId = 8 + indexBySource.size;
+      if (iconId > 255) {
+        throw new Error("自定义图标超过 248 个，无法放入共享图集");
+      }
+      indexBySource.set(source, iconId);
+    }
+    ids[nodeIndex] = iconId;
   }
   return ids;
 }

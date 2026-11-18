@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "1.0",
+  "title": "Example knowledge graph",
+  "description": "Replace with scope, method, and caveats.",
+  "entities": [
+    {
+      "id": "system:whole",
+      "type": "system",
+      "name": "Whole",
+      "label": "Whole system",
+      "groupIds": [
+        "system-level"
+      ],
+      "sourceIds": [
+        "source-1"
+      ],
+      "attributes": {}
+    },
+    {
+      "id": "component:part",
+      "type": "component",
+      "name": "Part",
+      "label": "Constituent component",
+      "groupIds": [
+        "component-level"
+      ],
+      "sourceIds": [
+        "source-1"
+      ],
+      "attributes": {}
+    }
+  ],
+  "relations": [
+    {
+      "id": "relation:whole-part",
+      "type": "contains",
+      "source": "system:whole",
+      "target": "component:part",
+      "label": "包含",
+      "directed": true,
+      "sourceIds": [
+        "source-1"
+      ],
+      "attributes": {}
+    }
+  ],
+  "groups": [
+    {
+      "id": "system-level",
+      "label": "系统层",
+      "type": "structural-level"
+    },
+    {
+      "id": "component-level",
+      "label": "组成层",
+      "type": "structural-level"
+    }
+  ],
+  "sources": [
+    {
+      "id": "source-1",
+      "title": "Example source",
+      "url": "https://example.org/source",
+      "accessedAt": "2026-11-18",
+      "notes": "Replace with the evidence supporting this example."
+    }
+  ],
+  "attributes": {}
+}

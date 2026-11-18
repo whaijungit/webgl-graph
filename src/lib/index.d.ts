@@ -44,7 +44,11 @@ export interface GraphBounds {
 /** GraphView 构造参数。 */
 export interface GraphViewOptions {
   /** 初始图数据。 */
-  data?: GraphPayload | ObjectGraphPayload | GraphData;
+  data?:
+    | GraphPayload
+    | ObjectGraphPayload
+    | KnowledgeGraphPayload
+    | GraphData;
   /** 初始样式。 */
   style?: GraphStyleOptions;
   /** 设置数据后是否自动适配视图。 */
@@ -79,12 +83,16 @@ export interface GraphStyleOptions {
   weightStrength?: number;
   /** 标签总开关。 */
   showLabels?: boolean;
+  /** 是否显示分组包围圈和分组标签。 */
+  showGroupBounds?: boolean;
   /** 标签字号，单位 CSS 像素。 */
   labelFontSize?: number;
   /** 边线整体宽度倍数。 */
   edgeWidthScale?: number;
   /** 边线显示总开关。 */
   showEdges?: boolean;
+  /** 是否在每条有向边的目标端绘制方向箭头。 */
+  showEdgeArrows?: boolean;
 }
 
 /** 交给渲染器的规范化样式。 */
@@ -109,12 +117,16 @@ export interface RenderStyle {
   weightStrength: number;
   /** 标签总开关。 */
   showLabels: boolean;
+  /** 是否显示分组包围圈和分组标签。 */
+  showGroupBounds: boolean;
   /** 标签字号。 */
   labelFontSize: number;
   /** 边宽倍数。 */
   edgeWidthScale: number;
   /** 边显示开关。 */
   showEdges: boolean;
+  /** 边方向箭头显示开关。 */
+  showEdgeArrows: boolean;
 }
 
 /** 对象图分组。 */
@@ -155,6 +167,8 @@ export interface ObjectGraphNode {
   color?: ColorInput;
   /** 可选节点图标索引。 */
   iconId?: number;
+  /** 可选节点自定义图标 URL 或 Data URL。 */
+  icon?: string | null;
 }
 
 /** 对象图中的关系边。 */
@@ -185,6 +199,98 @@ export interface ObjectGraphPayload {
   generationMs?: number;
 }
 
+/** 平台无关知识图谱分组。 */
+export interface KnowledgeGraphGroup {
+  /** 分组唯一 ID。 */
+  id: string;
+  /** 分组显示名称。 */
+  label: string;
+  /** 分组类别。 */
+  type?: string;
+  /** 分组说明。 */
+  description?: string;
+}
+
+/** 平台无关知识图谱实体。 */
+export interface KnowledgeGraphEntity {
+  /** 实体唯一 ID。 */
+  id: string;
+  /** 实体类型。 */
+  type: string;
+  /** 实体名称。 */
+  name: string;
+  /** 显示标签。 */
+  label?: string;
+  /** 实体说明。 */
+  description?: string;
+  /** 别名列表。 */
+  aliases?: readonly string[];
+  /** 所属分组 ID。 */
+  groupIds?: readonly string[];
+  /** 来源 ID。 */
+  sourceIds?: readonly string[];
+  /** 领域属性。 */
+  attributes?: Readonly<Record<string, unknown>>;
+}
+
+/** 平台无关知识图谱关系。 */
+export interface KnowledgeGraphRelation {
+  /** 关系唯一 ID。 */
+  id: string;
+  /** 关系类型。 */
+  type: string;
+  /** 起点实体 ID。 */
+  source: string;
+  /** 终点实体 ID。 */
+  target: string;
+  /** 关系显示标签。 */
+  label?: string;
+  /** 是否为有向关系；缺省视为有向。 */
+  directed?: boolean;
+  /** 来源 ID。 */
+  sourceIds?: readonly string[];
+  /** 关系属性。 */
+  attributes?: Readonly<Record<string, unknown>>;
+}
+
+/** 平台无关知识图谱来源。 */
+export interface KnowledgeGraphSource {
+  /** 来源唯一 ID。 */
+  id: string;
+  /** 来源标题。 */
+  title: string;
+  /** 发布者。 */
+  publisher?: string;
+  /** 来源 URL。 */
+  url?: string;
+  /** 访问日期。 */
+  accessedAt?: string;
+  /** DOI、档案号等标识。 */
+  identifier?: string;
+  /** 来源说明。 */
+  notes?: string;
+}
+
+/** 平台无关知识图谱数据。 */
+export interface KnowledgeGraphPayload {
+  /** 数据结构版本。 */
+  schemaVersion: "1.0";
+  /** 图谱标题。 */
+  title: string;
+  /** 图谱范围、方法和注意事项。 */
+  description?: string;
+  /** 实体数组。 */
+  entities: readonly KnowledgeGraphEntity[];
+  /** 关系数组。 */
+  relations: readonly KnowledgeGraphRelation[];
+  /** 分组数组。 */
+  groups?: readonly KnowledgeGraphGroup[];
+  /** 来源数组。 */
+  sources?: readonly KnowledgeGraphSource[];
+  /** 图谱级属性。 */
+  attributes?: Readonly<Record<string, unknown>>;
+}
+
 /**
  * 可由 Worker、JSON 或业务代码构造的 SoA 图数据。
  *
@@ -205,12 +311,16 @@ export interface GraphPayload {
   nodeSizes: ArrayLike<number>;
   /** 节点颜色，支持扁平字节或逐节点颜色输入。 */
   nodeColors: ArrayLike<ColorInput>;
+  /** 可选节点颜色覆盖标记；值为 1 时选中图片节点使用该节点自定义颜色。 */
+  nodeColorOverrides?: ArrayLike<number> | null;
   /** 节点社区索引。 */
   nodeGroups: ArrayLike<number>;
   /** 节点权重；缺省时使用连接度。 */
   nodeWeights?: ArrayLike<number> | null;
   /** 节点图标图集索引；缺省时按索引轮换。 */
   nodeIconIds?: ArrayLike<number> | null;
+  /** 可选逐节点自定义图标 URL 或 Data URL。 */
+  nodeIconSources?: readonly (string | null)[] | null;
   /** 节点标签；缺省时不显示标签。 */
   nodeLabels?: readonly string[] | null;
   /** 节点类型文本。 */
@@ -395,12 +505,16 @@ export class GraphView {
   /**
    * 装载图数据。
    *
-   * @param payload - GraphData 或 SoA 图数据。
+   * @param payload - GraphData、SoA、对象图或通用知识图谱。
    * @param options - 是否自动适配视图。
    * @returns 规范化后的 GraphData。
    */
   setData(
-    payload: GraphPayload | ObjectGraphPayload | GraphData,
+    payload:
+      | GraphPayload
+      | ObjectGraphPayload
+      | KnowledgeGraphPayload
+      | GraphData,
     options?: {
       /** 是否自动适配视图。 */
       fit?: boolean;
@@ -516,10 +630,14 @@ export class GraphData {
   readonly nodeSizes: Float32Array;
   /** 节点 RGBA 颜色字节。 */
   readonly nodeColors: Uint8Array;
+  /** 节点是否显式提供了自定义颜色。 */
+  readonly nodeColorOverrides: Uint8Array;
   /** 节点社区索引。 */
   readonly nodeGroups: Uint16Array;
   /** 节点图标索引。 */
   readonly nodeIconIds: Uint8Array;
+  /** 逐节点自定义图标来源；内置图标为 `null`。 */
+  readonly nodeIconSources: Array<string | null> | null;
   /** 节点原始权重。 */
   readonly rawNodeWeights: Float32Array;
   /** 归一化节点权重。 */

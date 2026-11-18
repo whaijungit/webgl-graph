@@ -2,19 +2,23 @@
 
 `traffic-globe` 是一个基于 **TypeScript + Vite + WebGL2** 的高性能关系网络原型。项目名称沿用原交通球项目，但当前核心已经迁移为通用关系图：数据以 SoA TypedArray 组织，支持交互选择、直接邻域高亮、图片图标、共享 Canvas 标签、边样式和百万节点级压测。
 
-默认演示数据为 **100 个节点 / 3,000 条边 / 10 个社区**。节点数达到 **100,000** 后自动切换为 Point Sprite 大图渲染路径。
+默认演示为比亚迪品牌 / 技术 → 车系 → 车型关系图；南昌起义人物关系通过 `?preset=nanchang` 打开，npm 依赖示例通过 `?preset=dependencies` 打开，随机 **100 个节点 / 3,000 条边** 图可通过 `?preset=default` 打开。节点数达到 **100,000** 后自动切换为 Point Sprite 大图渲染路径。
 
 ## 主要能力
 
 - WebGL2 实例化渲染，CPU 热路径主要维护 TypedArray 和 GPU buffer。
-- `GraphView.setData()` 同时接受运行时 `GraphData`、SoA `GraphPayload` 和业务对象 `ObjectGraphPayload`。
+- `GraphView.setData()` 同时接受运行时 `GraphData`、SoA `GraphPayload`、业务对象 `ObjectGraphPayload` 和通用 `KnowledgeGraphPayload`。
 - 点击节点显示直接邻居、原始图标、标签和关联边；点击其他节点切换邻域，点击空白区域清除选择。
 - 邻域节点保留各自的 `nodeColors` 和 `nodeIconIds`，关联边保留各自的 `edgeColors`。
+- 选中图片节点默认保留原始图标色，显式提供 `color` 时使用自定义颜色。
 - 支持圆形、方形、菱形、三角形、六边形、星形、混合形状和图片图标。
+- 每个节点可通过 `icon` 或 `nodeIconSources` 提供独立 URL/Data URL 图标，内部合并到共享图集。
 - 支持直线、曲线和虚线边；直线使用片元级抗锯齿。
+- 有向边只在 `target` 节点轮廓处显示一个方向箭头，箭头与边共用实例、颜色和透明度。
 - 节点标签共享一个 Canvas 2D 图层，不创建逐节点 DOM。
 - 默认按需渲染；可持续渲染并按 30～60 FPS 控制目标帧率。
-- 配置面板支持 JSON 数据上传和示例数据下载。
+- 左下角提供 `stats.js` FPS 面板，开启持续渲染或进行交互时实时刷新。
+- 配置面板支持节点搜索、JSON 数据上传和示例数据下载。
 
 ## 快速开始
 
@@ -49,7 +53,7 @@ http://localhost:5173/?preset=1m
 
 | 预设 | 节点 | 边 | 社区 |
 | --- | ---: | ---: | ---: |
-| 默认 | 100 | 3,000 | 10 |
+| `preset=default` | 100 | 3,000 | 10 |
 | `100k` | 100,000 | 200,000 | 48 |
 | `300k` | 300,000 | 600,000 | 64 |
 | `600k` | 600,000 | 1,200,000 | 96 |
@@ -78,6 +82,7 @@ http://localhost:5173/?preset=300k&continuous=1&fps=60
 - 点击其他节点：切换焦点邻域。
 - 点击空白区域：清除选择。
 - 配置面板：切换数据规模、上传数据、下载示例、缩放、适配视图和调整样式。
+- 显示配置可单独关闭“边方向箭头”。
 
 演示页会在浏览器控制台暴露以下调试对象：
 
@@ -136,6 +141,7 @@ const graph = new GraphView("#graph-canvas", {
     nodeShape: "image",
     edgeStyle: "straight",
     showLabels: true,
+    showGroupBounds: true,
     labelFontSize: 10,
   },
 });
@@ -211,6 +217,7 @@ interface ObjectGraphPayloadExample {
 nodePositions    Float32Array  2 x N
 nodeSizes        Float32Array    N
 nodeColors       Uint8Array     4 x N
+nodeColorOverrides Uint8Array   N, optional
 nodeGroups       Uint16Array     N
 nodeIconIds      Uint8Array      N, optional
 nodeWeights      Float32Array    N, optional
@@ -236,15 +243,16 @@ edgeKinds        string[]        E, optional
 节点数小于 100,000 时：
 
 - 每个节点使用四顶点图标四边形实例化绘制。
-- 点击节点时额外绘制邻域覆盖层，使用邻居自己的图片图标和颜色。
+- 点击节点时，图片模式使用邻域覆盖层保留邻居自己的图标和颜色；圆形、方形等模式使用独立高亮 pass 最后绘制邻域，保持当前选择的节点形状。
 - 普通状态通常为 2 个 draw call：边、节点。
-- 选中状态通常为 3 个 draw call：边、普通节点、邻域覆盖层。
+- 选中状态通常为 3 个 draw call：边、普通节点、邻域高亮 pass 或图片覆盖层。
 
 ### 大图
 
 节点数至少为 100,000 时：
 
-- 每个节点使用一个 Point Sprite 顶点，图标由 `nodeIconIds` 在片元着色器中绘制。
+- 每个节点使用一个 Point Sprite 顶点，并通过 `uNodeShape` 支持全部节点形状。
+- 图片模式由 `nodeIconIds` 绘制图标；其他形状使用轻量片元 SDF，不会退回图标。
 - 当前视口内的全部节点都会提交，不按节点预算或实例序号抽样。
 - 当前焦点最后提交，直接邻居紧随其后，避免被普通节点覆盖。
 - 选中节点约放大到 40～60px，直接邻居至少约 24px。
@@ -260,6 +268,11 @@ traffic-globe/
 ├─ src/
 │  ├─ main.ts                       # 演示装配、配置面板、上传与邻域面板
 │  ├─ examples/
+│  │  ├─ demo-graph.ts                # 内置示例公共接口与装载器
+│  │  ├─ demo-registry.ts             # 示例选择与 URL 映射
+│  │  ├─ byd-series-graph.ts          # 比亚迪默认关系图
+│  │  ├─ nanchang-uprising-graph.ts   # 南昌起义人物与指挥关系
+│  │  ├─ package-dependency-graph.ts # 真实 npm 构建依赖示例
 │  │  └─ relationship-payload.ts    # SoA 与对象图示例
 │  ├─ graph/
 │  │  ├─ GraphData.ts               # SoA 数据校验与访问

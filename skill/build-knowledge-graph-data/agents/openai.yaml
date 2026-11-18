@@ -1,0 +1,7 @@
+interface:
+  display_name: "Knowledge Graph Data"
+  short_description: "Build portable any-domain knowledge graphs"
+  default_prompt: "Use $build-knowledge-graph-data to create a verified, portable knowledge graph dataset for this domain."
+
+policy:
+  allow_implicit_invocation: true

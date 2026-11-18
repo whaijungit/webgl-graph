@@ -9,16 +9,20 @@ import type { Camera2D } from "./Camera2D.js";
  *
  * @param weight - 0 到 1 的归一化节点权重。
  * @param isFocus - 是否为当前焦点节点。
+ * @param zoomScale - 相机缩放带来的平滑尺寸倍率。
  * @returns CSS 像素单位下的图标半径。
  */
 export function getHighlightNodeRadius(
   weight: number,
   isFocus: boolean,
+  zoomScale: number = 1,
 ): number {
   const safeWeight = Math.max(0, Math.min(1, Number(weight) || 0));
-  return isFocus
+  const safeZoomScale = Math.max(1, Math.min(2.5, Number(zoomScale) || 1));
+  const baseRadius = isFocus
     ? 24 + safeWeight * 8
     : 15 + safeWeight * 6;
+  return baseRadius * safeZoomScale;
 }
 
 const VERTEX_SHADER = `#version 300 es
@@ -29,6 +33,8 @@ layout(location = 1) in vec2 aPosition;
 layout(location = 2) in float aRadius;
 layout(location = 3) in float aAccent;
 layout(location = 4) in float aIconIndex;
+layout(location = 5) in float aUseColor;
+layout(location = 6) in vec4 aColorOverride;
 
 uniform vec2 uViewport;
 uniform vec2 uCenter;
@@ -37,6 +43,8 @@ uniform float uScale;
 out vec2 vCorner;
 out float vAccent;
 flat out float vIconIndex;
+flat out float vUseColor;
+flat out vec4 vColorOverride;
 
 void main() {
   vec2 screenCenter =
@@ -47,6 +55,8 @@ void main() {
   vCorner = aCorner;
   vAccent = aAccent;
   vIconIndex = aIconIndex;
+  vUseColor = aUseColor;
+  vColorOverride = aColorOverride;
 }
 `;
 
@@ -56,30 +66,41 @@ precision highp float;
 in vec2 vCorner;
 in float vAccent;
 flat in float vIconIndex;
+flat in float vUseColor;
+flat in vec4 vColorOverride;
 uniform sampler2D uIconAtlas;
 out vec4 outColor;
 
 void main() {
-  float iconIndex = min(floor(vIconIndex + 0.5), 7.0);
-  float column = mod(iconIndex, 4.0);
-  float row = floor(iconIndex / 4.0);
+  float iconIndex = min(floor(vIconIndex + 0.5), 255.0);
+  float column = mod(iconIndex, 16.0);
+  float row = floor(iconIndex / 16.0);
   vec2 localUv = (vCorner + 1.0) * 0.5;
   vec2 atlasUv =
-    (vec2(column, row) + localUv) / vec2(4.0, 2.0);
+    (vec2(column, row) + localUv) / vec2(16.0, 16.0);
   vec4 imageColor = texture(uIconAtlas, atlasUv);
   if (imageColor.a <= 0.01) {
     discard;
   }
 
+  float glyphMask = smoothstep(
+    0.7,
+    0.95,
+    min(imageColor.r, min(imageColor.g, imageColor.b))
+  );
+  vec3 imageOutput = vUseColor > 0.5
+    ? mix(vColorOverride.rgb, vec3(1.0), glyphMask)
+    : imageColor.rgb;
+  float alphaScale = vUseColor > 0.5 ? vColorOverride.a : 1.0;
   outColor = vec4(
-    imageColor.rgb,
-    imageColor.a * mix(0.92, 1.0, vAccent)
+    imageOutput,
+    imageColor.a * alphaScale * mix(0.92, 1.0, vAccent)
   );
 }
 `;
 
 /**
- * 用每个邻居自己的原始图标放大绘制选中邻域。
+ * 图片节点模式下，用每个邻居自己的原始图标放大绘制选中邻域。
  */
 export class HighlightOverlayRenderer {
   /** WebGL2 上下文。 */
@@ -136,12 +157,14 @@ export class HighlightOverlayRenderer {
    * @param focusId - 焦点节点索引。
    * @param activeIds - 焦点和全部直接邻居。
    * @param graphData - 当前图数据。
+   * @param zoomScale - 相机缩放带来的平滑尺寸倍率。
    * @returns 无返回值。
    */
   update(
     focusId: number | null,
     activeIds: readonly number[],
     graphData: GraphData,
+    zoomScale: number = 1,
   ): void {
     if (focusId === null || activeIds.length === 0) {
       this.count = 0;
@@ -155,6 +178,8 @@ export class HighlightOverlayRenderer {
     const sourcePositions = graphData.nodePositions;
     const weights = graphData.nodeWeights;
     const iconIds = graphData.nodeIconIds;
+    const colors = graphData.nodeColors;
+    const colorOverrides = graphData.nodeColorOverrides;
 
     // 焦点实例最后提交，确保它与邻居重叠时始终绘制在最上层。
     let targetIndex = 0;
@@ -166,19 +191,42 @@ export class HighlightOverlayRenderer {
       positions[targetIndex * 2 + 1] = sourcePositions[nodeId * 2 + 1];
 
       const weight = weights[nodeId] ?? 0;
-      metadata[targetIndex * 3] = getHighlightNodeRadius(weight, false);
-      metadata[targetIndex * 3 + 1] = 0.7;
-      metadata[targetIndex * 3 + 2] = iconIds[nodeId] ?? 0;
+      const metadataOffset = targetIndex * 8;
+      metadata[metadataOffset] = getHighlightNodeRadius(
+        weight,
+        false,
+        zoomScale,
+      );
+      metadata[metadataOffset + 1] = 0.7;
+      metadata[metadataOffset + 2] = iconIds[nodeId] ?? 0;
+      metadata[metadataOffset + 3] = colorOverrides[nodeId] ?? 0;
+      metadata[metadataOffset + 4] = (colors[nodeId * 4] ?? 255) / 255;
+      metadata[metadataOffset + 5] =
+        (colors[nodeId * 4 + 1] ?? 255) / 255;
+      metadata[metadataOffset + 6] =
+        (colors[nodeId * 4 + 2] ?? 255) / 255;
+      metadata[metadataOffset + 7] =
+        (colors[nodeId * 4 + 3] ?? 255) / 255;
       targetIndex += 1;
     }
     positions[targetIndex * 2] = sourcePositions[focusId * 2];
     positions[targetIndex * 2 + 1] = sourcePositions[focusId * 2 + 1];
-    metadata[targetIndex * 3] = getHighlightNodeRadius(
+    const focusOffset = targetIndex * 8;
+    metadata[focusOffset] = getHighlightNodeRadius(
       weights[focusId] ?? 0,
       true,
+      zoomScale,
     );
-    metadata[targetIndex * 3 + 1] = 1;
-    metadata[targetIndex * 3 + 2] = iconIds[focusId] ?? 0;
+    metadata[focusOffset + 1] = 1;
+    metadata[focusOffset + 2] = iconIds[focusId] ?? 0;
+    metadata[focusOffset + 3] = colorOverrides[focusId] ?? 0;
+    metadata[focusOffset + 4] = (colors[focusId * 4] ?? 255) / 255;
+    metadata[focusOffset + 5] =
+      (colors[focusId * 4 + 1] ?? 255) / 255;
+    metadata[focusOffset + 6] =
+      (colors[focusId * 4 + 2] ?? 255) / 255;
+    metadata[focusOffset + 7] =
+      (colors[focusId * 4 + 3] ?? 255) / 255;
     targetIndex += 1;
 
     const gl = this.gl;
@@ -192,7 +240,7 @@ export class HighlightOverlayRenderer {
     gl.bufferSubData(
       gl.ARRAY_BUFFER,
       0,
-      metadata.subarray(0, targetIndex * 3),
+      metadata.subarray(0, targetIndex * 8),
     );
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
     this.count = targetIndex;
@@ -271,16 +319,24 @@ export class HighlightOverlayRenderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.metaBuffer);
 
     gl.enableVertexAttribArray(2);
-    gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 12, 0);
+    gl.vertexAttribPointer(2, 1, gl.FLOAT, false, 32, 0);
     gl.vertexAttribDivisor(2, 1);
 
     gl.enableVertexAttribArray(3);
-    gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 12, 4);
+    gl.vertexAttribPointer(3, 1, gl.FLOAT, false, 32, 4);
     gl.vertexAttribDivisor(3, 1);
 
     gl.enableVertexAttribArray(4);
-    gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 12, 8);
+    gl.vertexAttribPointer(4, 1, gl.FLOAT, false, 32, 8);
     gl.vertexAttribDivisor(4, 1);
+
+    gl.enableVertexAttribArray(5);
+    gl.vertexAttribPointer(5, 1, gl.FLOAT, false, 32, 12);
+    gl.vertexAttribDivisor(5, 1);
+
+    gl.enableVertexAttribArray(6);
+    gl.vertexAttribPointer(6, 4, gl.FLOAT, false, 32, 16);
+    gl.vertexAttribDivisor(6, 1);
 
     gl.bindVertexArray(null);
   }
@@ -303,7 +359,7 @@ export class HighlightOverlayRenderer {
 
     this.capacity = capacity;
     this.positions = new Float32Array(capacity * 2);
-    this.metadata = new Float32Array(capacity * 3);
+    this.metadata = new Float32Array(capacity * 8);
 
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);

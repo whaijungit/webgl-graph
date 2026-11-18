@@ -1,11 +1,19 @@
 import "./library-demo.css";
+import Stats from "stats.js";
 import { GraphDataService } from "./graph/GraphDataService";
+import { loadDemoGraph } from "./examples/demo-graph";
+import {
+  DEFAULT_DEMO_ID,
+  resolveDemoByPresetId,
+  resolveInitialDemo,
+} from "./examples/demo-registry";
 import { objectGraphInputExample } from "./examples/relationship-payload";
 import { GraphView } from "./lib";
 import type {
   EdgeStyleName,
   GraphGenerationOptions,
   GraphPayload,
+  KnowledgeGraphPayload,
   NodeDetails,
   NodeShapeName,
   ObjectGraphPayload,
@@ -78,6 +86,7 @@ const STRESS_PRESETS: Readonly<Record<string, StressPreset>> = {
 
 const query = new URLSearchParams(window.location.search);
 const stressPreset = resolveStressPreset(query);
+const initialDemo = resolveInitialDemo(query);
 const continuousRender = query.get("continuous") === "1";
 const targetFps = parsePositiveInteger(query.get("fps"), 60);
 const graphView = new GraphView("#graph-canvas", {
@@ -91,7 +100,8 @@ const graphView = new GraphView("#graph-canvas", {
     dimOpacity: 0.1,
     edgeDimOpacity: 0.035,
     weightStrength: 1,
-    labelFontSize: 1,
+    labelFontSize: 10,
+    showGroupBounds: true,
     nodeScale: 0.9,
     showLabels: true,
     edgeWidthScale: 0.1,
@@ -99,10 +109,16 @@ const graphView = new GraphView("#graph-canvas", {
   },
 });
 const dataService = new GraphDataService();
+const stats = new Stats();
+stats.showPanel(0);
+stats.dom.classList.add("stats-fps-panel");
+stats.dom.title = "Stats.js FPS，点击切换 FPS / MS";
+document.body.append(stats.dom);
 
 window.graphView = graphView;
 window.disposeGraphView = () => {
   dataService.dispose();
+  stats.dom.remove();
   graphView.dispose();
 };
 
@@ -112,51 +128,62 @@ graphView.on("framemetrics", (metrics) => {
 });
 graphView.on("frame", (metrics) => {
   window.graphLastFrame = metrics;
+  stats.update();
 });
 setupConfigurationControls();
 setupNeighborhoodPanel();
+setupNodeSearch();
 
-setDocumentProgress(stressPreset, 0);
 const loadStartedAt = performance.now();
 
 try {
-  const generationOptions: GraphGenerationOptions = {
-    nodeCount: stressPreset.nodeCount,
-    edgeCount: stressPreset.edgeCount,
-    clusterCount: stressPreset.clusterCount,
-    seed: stressPreset.seed,
-    layoutAspect: window.innerWidth / window.innerHeight,
-  };
-  const payload = await dataService.load(
-    generationOptions,
-    (progress) => setDocumentProgress(stressPreset, progress),
-  );
-  const loadMs = performance.now() - loadStartedAt;
-  const uploadStartedAt = performance.now();
-  graphView.setData(payload);
-  const uploadMs = performance.now() - uploadStartedAt;
-  const stressInfo = {
-    preset: stressPreset.id,
-    nodeCount: stressPreset.nodeCount,
-    edgeCount: stressPreset.edgeCount,
-    generationMs: payload.generationMs ?? 0,
-    loadMs,
-    uploadMs,
-  };
-  window.graphStressInfo = stressInfo;
-  document.title =
-    `${formatCount(stressPreset.nodeCount)} 节点 · ` +
-    `${formatCount(stressPreset.edgeCount)} 边 · WebGL2`;
-  graphView.canvas.setAttribute(
-    "aria-label",
-    `${formatCount(stressPreset.nodeCount)} 个节点和 ` +
-      `${formatCount(stressPreset.edgeCount)} 条边的压测关系图`,
-  );
-  setConfigStatus(
-    `${formatCount(stressPreset.nodeCount)} 节点 · ` +
-      `${formatCount(stressPreset.edgeCount)} 边 · 配置面板按需更新`,
-  );
-  console.info("[traffic-graph stress]", stressInfo);
+  if (initialDemo) {
+    const result = loadDemoGraph(graphView, initialDemo, loadStartedAt);
+    window.graphStressInfo = result.info;
+    document.title = result.documentTitle;
+    graphView.canvas.setAttribute("aria-label", result.ariaLabel);
+    setConfigStatus(result.statusText);
+    console.info(`[traffic-graph ${initialDemo.id}]`, result.info);
+  } else {
+    setDocumentProgress(stressPreset, 0);
+    const generationOptions: GraphGenerationOptions = {
+      nodeCount: stressPreset.nodeCount,
+      edgeCount: stressPreset.edgeCount,
+      clusterCount: stressPreset.clusterCount,
+      seed: stressPreset.seed,
+      layoutAspect: window.innerWidth / window.innerHeight,
+    };
+    const payload = await dataService.load(
+      generationOptions,
+      (progress) => setDocumentProgress(stressPreset, progress),
+    );
+    const loadMs = performance.now() - loadStartedAt;
+    const uploadStartedAt = performance.now();
+    graphView.setData(payload);
+    const uploadMs = performance.now() - uploadStartedAt;
+    const stressInfo = {
+      preset: stressPreset.id,
+      nodeCount: stressPreset.nodeCount,
+      edgeCount: stressPreset.edgeCount,
+      generationMs: payload.generationMs ?? 0,
+      loadMs,
+      uploadMs,
+    };
+    window.graphStressInfo = stressInfo;
+    document.title =
+      `${formatCount(stressPreset.nodeCount)} 节点 · ` +
+      `${formatCount(stressPreset.edgeCount)} 边 · WebGL2`;
+    graphView.canvas.setAttribute(
+      "aria-label",
+      `${formatCount(stressPreset.nodeCount)} 个节点和 ` +
+        `${formatCount(stressPreset.edgeCount)} 条边的压测关系图`,
+    );
+    setConfigStatus(
+      `${formatCount(stressPreset.nodeCount)} 节点 · ` +
+        `${formatCount(stressPreset.edgeCount)} 边 · 配置面板按需更新`,
+    );
+    console.info("[traffic-graph stress]", stressInfo);
+  }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   document.title = `压测数据加载失败 · ${message}`;
@@ -284,13 +311,32 @@ function setupConfigurationControls(): void {
     .querySelectorAll<HTMLButtonElement>("[data-preset]")
     .forEach((button) => {
       const presetId = button.dataset.preset ?? "default";
-      button.classList.toggle("is-active", presetId === stressPreset.id);
+      const demo = resolveDemoByPresetId(presetId);
+      button.classList.toggle(
+        "is-active",
+        demo
+          ? initialDemo?.id === demo.id
+          : initialDemo === null && presetId === stressPreset.id,
+      );
       button.addEventListener("click", () => {
-        if (presetId === stressPreset.id) {
+        if (demo && initialDemo?.id === demo.id) {
+          return;
+        }
+        if (
+          !demo &&
+          initialDemo === null &&
+          presetId === stressPreset.id
+        ) {
           return;
         }
         const nextQuery = new URLSearchParams(window.location.search);
-        nextQuery.set("preset", presetId);
+        nextQuery.delete("nodes");
+        nextQuery.delete("edges");
+        if (demo?.id === DEFAULT_DEMO_ID) {
+          nextQuery.delete("preset");
+        } else {
+          nextQuery.set("preset", presetId);
+        }
         window.location.assign(
           `${window.location.pathname}?${nextQuery.toString()}`,
         );
@@ -407,11 +453,28 @@ function setupConfigurationControls(): void {
     graphView.setStyle({ showLabels: labelsToggle.checked });
   });
 
+  const groupBoundsToggle = getRequiredElement<HTMLInputElement>(
+    "#show-group-bounds",
+  );
+  groupBoundsToggle.checked = style.showGroupBounds;
+  groupBoundsToggle.addEventListener("change", () => {
+    graphView.setStyle({ showGroupBounds: groupBoundsToggle.checked });
+  });
+
   const edgesToggle =
     getRequiredElement<HTMLInputElement>("#show-edges");
   edgesToggle.checked = style.showEdges;
   edgesToggle.addEventListener("change", () => {
     graphView.setStyle({ showEdges: edgesToggle.checked });
+  });
+
+  const edgeArrowsToggle =
+    getRequiredElement<HTMLInputElement>("#show-edge-arrows");
+  edgeArrowsToggle.checked = style.showEdgeArrows;
+  edgeArrowsToggle.addEventListener("change", () => {
+    graphView.setStyle({
+      showEdgeArrows: edgeArrowsToggle.checked,
+    });
   });
 
   const continuousToggle =
@@ -448,7 +511,7 @@ async function importGraphFile(
 
     const uploadStartedAt = performance.now();
     const data = graphView.setData(
-      payload as GraphPayload | ObjectGraphPayload,
+      payload as GraphPayload | ObjectGraphPayload | KnowledgeGraphPayload,
     );
     const uploadMs = performance.now() - uploadStartedAt;
     document
@@ -523,14 +586,19 @@ function setupNeighborhoodPanel(): void {
   const closeButton =
     getRequiredElement<HTMLButtonElement>("#neighborhood-close");
 
+  const clearPanel = (): void => {
+    panel.hidden = true;
+    title.textContent = "";
+    summary.textContent = "";
+    list.replaceChildren();
+  };
+
   closeButton.addEventListener("click", () => graphView.select(null));
+  graphView.on("data", clearPanel);
 
   graphView.on("select", ({ node, related }) => {
     if (!node) {
-      panel.hidden = true;
-      title.textContent = "";
-      summary.textContent = "";
-      list.replaceChildren();
+      clearPanel();
       return;
     }
 
@@ -570,6 +638,122 @@ function setupNeighborhoodPanel(): void {
     list.replaceChildren(fragment);
     panel.hidden = false;
     fitNeighborhoodOnGraph(node, related, panel);
+  });
+}
+
+/**
+ * 按节点标签和类型搜索当前图数据。
+ *
+ * 搜索只在用户停止输入后执行，并最多展示 24 条结果；点击或按回车
+ * 会选中节点并复用现有邻域定位与面板显示流程。
+ *
+ * @returns 无返回值。
+ */
+function setupNodeSearch(): void {
+  const input =
+    getRequiredElement<HTMLInputElement>("#node-search-input");
+  const summary =
+    getRequiredElement<HTMLElement>("#node-search-summary");
+  const results =
+    getRequiredElement<HTMLUListElement>("#node-search-results");
+  const maxResults = 24;
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  let matchedIndexes: number[] = [];
+
+  const clearResults = (): void => {
+    matchedIndexes = [];
+    results.replaceChildren();
+    results.hidden = true;
+    summary.textContent = "";
+  };
+
+  const selectResult = (nodeIndex: number): void => {
+    graphView.select(nodeIndex);
+    const node = graphView.data?.getNodeDetails(nodeIndex);
+    summary.textContent = node
+      ? `已选择 ${getNodeDisplayName(node)}`
+      : "已选择节点";
+    results.hidden = true;
+  };
+
+  const runSearch = (): void => {
+    const query = input.value.trim().toLocaleLowerCase();
+    clearResults();
+    if (!query) {
+      return;
+    }
+
+    const data = graphView.data;
+    if (!data) {
+      summary.textContent = "图数据尚未加载";
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    matchedIndexes = [];
+    for (
+      let nodeIndex = 0;
+      nodeIndex < data.nodeCount && matchedIndexes.length < maxResults;
+      nodeIndex += 1
+    ) {
+      const label =
+        data.nodeLabels?.[nodeIndex] ?? `节点 ${nodeIndex + 1}`;
+      const kind = data.nodeKinds?.[nodeIndex] ?? "";
+      if (
+        !label.toLocaleLowerCase().includes(query) &&
+        !kind.toLocaleLowerCase().includes(query) &&
+        !String(nodeIndex + 1).includes(query)
+      ) {
+        continue;
+      }
+
+      matchedIndexes.push(nodeIndex);
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      const labelElement = document.createElement("span");
+      const metadata = document.createElement("span");
+      button.type = "button";
+      button.className = "node-search-result";
+      button.title = label;
+      button.setAttribute("aria-label", `选择节点 ${label}`);
+      labelElement.className = "node-search-result-label";
+      labelElement.textContent = label;
+      metadata.className = "node-search-result-meta";
+      metadata.textContent = kind || `#${nodeIndex + 1}`;
+      button.append(labelElement, metadata);
+      button.addEventListener("click", () => selectResult(nodeIndex));
+      item.append(button);
+      fragment.append(item);
+    }
+
+    results.append(fragment);
+    results.hidden = matchedIndexes.length === 0;
+    summary.textContent =
+      matchedIndexes.length === 0
+        ? "没有匹配节点"
+        : `显示 ${matchedIndexes.length} 个匹配节点`;
+  };
+
+  input.addEventListener("input", () => {
+    if (searchTimer !== null) {
+      clearTimeout(searchTimer);
+    }
+    searchTimer = setTimeout(runSearch, 160);
+  });
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && matchedIndexes.length > 0) {
+      event.preventDefault();
+      selectResult(matchedIndexes[0]);
+    } else if (event.key === "Escape") {
+      input.value = "";
+      clearResults();
+    }
+  });
+
+  graphView.on("data", () => {
+    input.value = "";
+    clearResults();
   });
 }
 

@@ -82,7 +82,7 @@ export class GraphStyle {
     this.minimumNodeSize = 3;
     this.weightStrength = 1;
     this.showLabels = true;
-    this.showGroupBounds = true;
+    this.showGroupBounds = false;
     this.labelFontSize = 10;
     this.edgeWidthScale = 1;
     this.showEdges = true;

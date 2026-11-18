@@ -141,7 +141,7 @@ const graph = new GraphView("#graph-canvas", {
     nodeShape: "image",
     edgeStyle: "straight",
     showLabels: true,
-    showGroupBounds: true,
+    showGroupBounds: false,
     labelFontSize: 10,
   },
 });

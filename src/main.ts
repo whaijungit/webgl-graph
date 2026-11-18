@@ -101,7 +101,7 @@ const graphView = new GraphView("#graph-canvas", {
     edgeDimOpacity: 0.035,
     weightStrength: 1,
     labelFontSize: 10,
-    showGroupBounds: true,
+    showGroupBounds: false,
     nodeScale: 0.9,
     showLabels: true,
     edgeWidthScale: 0.1,

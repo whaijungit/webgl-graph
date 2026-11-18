@@ -82,7 +82,7 @@ edgeKinds        string[]        E，可选，关系类型文本
 
 调用 `graphView.setStyle({ showLabels: false })` 可以直接关闭节点和分组标签图层。没有 `nodeLabels` 的数据不会创建节点标签文本。
 
-`graphView.setStyle({ showGroupBounds: false })` 可单独关闭分组包围圈和组名，同时保留节点标签与关系边。
+分组包围圈和组名默认不显示；可通过 `graphView.setStyle({ showGroupBounds: true })` 单独开启，同时保留节点标签与关系边。
 
 标签还会根据测得的 FPS 自动降级：低于目标帧率约 10% 时开始减少普通标签预算，降到目标帧率约 60% 时自动隐藏普通标签；性能恢复后按较慢速度恢复。手动开关始终优先，关闭后无论 FPS 如何都不绘制标签。
 

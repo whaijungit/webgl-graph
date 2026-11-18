@@ -58,7 +58,7 @@ const graph = new GraphView("#graph-canvas", {
     nodeShape: "image",
     edgeStyle: "straight",
     showLabels: true,
-    showGroupBounds: true,
+    showGroupBounds: false,
     labelFontSize: 10,
     weightStrength: 1,
   },
@@ -198,7 +198,7 @@ graph.setStyle({
 });
 ```
 
-`showGroupBounds` 默认开启，用于控制分组包围圈和组名；设为 `false` 时仍保留节点标签。`showEdgeArrows` 默认开启，在每条边的起点和终点节点轮廓处各绘制一个箭头；箭头继承该边的颜色、透明度和选中高亮。
+`showGroupBounds` 默认关闭，用于控制分组包围圈和组名；设为 `true` 时显示分组圈，关闭后仍保留节点标签。`showEdgeArrows` 默认开启，在每条边的起点和终点节点轮廓处各绘制一个箭头；箭头继承该边的颜色、透明度和选中高亮。
 
 ### 视图与渲染
 

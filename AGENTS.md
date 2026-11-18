@@ -239,6 +239,7 @@ graphView.setStyle({
   dimOpacity: 0.1,
   weightStrength: 1,
   showLabels: true,
+  showGroupBounds: false,
   labelFontSize: 10,
   nodeScale: 1,
   minimumNodeSize: 3,
